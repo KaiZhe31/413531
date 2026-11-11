@@ -74,7 +74,10 @@ var P = [
 ];
 var S = load();
 migrate();
+LM.ensure("mine", S);
+LM.snapshot(S);
 function migrate() {
+  LM.ids(S);
   S.cats = S.cats || { expense: EXPC.slice(), income: INCC.slice() };
   S.rates = S.rates || { MYR: 1, SGD: 3.3, CNY: 0.6 };
   S.base = S.base || "MYR";
@@ -140,11 +143,13 @@ function load() {
 }
 function save() {
   if (RO) return;
+  // 先记下新增/修改/删除（_u 与删除墓碑），同步合并时才不会丢记录
+  LM.track(cur === "joint" ? "joint" : "mine", S);
+  S._t = Date.now();
   if (cur === "joint") {
     syncJ();
     return;
   }
-  S._t = Date.now();
   try {
     localStorage.setItem(KEY, JSON.stringify(S));
   } catch (e) {
@@ -601,17 +606,26 @@ function backup(k) {
   }
   if (k === "rst") {
     try {
-      var b = JSON.parse(localStorage.getItem("ledger.bak"));
-      if (b && b.accounts) {
-        var pn = S.pin;
-        S = b;
-        S.pin = pn;
-        S._t = Date.now();
-        migrate();
-        save();
-        render();
-        toast("已恢复");
+      // 把最近几份备份全部“合并”回来：只会找回缺的记录，不会删掉现有的
+      var bs = LM.backups(),
+        before = (S.tx || []).length;
+      if (!bs.length) {
+        toast("没有可恢复的备份");
+        return;
       }
+      LM.snapshot(S, true);
+      var m = S;
+      bs.forEach(function (b) {
+        b._t = 0; // 让现有数据的设置优先，备份只补记录
+        m = LM.merge(m, b);
+      });
+      var pn = S.pin;
+      S = m;
+      S.pin = pn;
+      migrate();
+      save();
+      render();
+      toast("已恢复，找回 " + Math.max(0, S.tx.length - before) + " 笔记录");
     } catch (e) {}
     return;
   }
@@ -623,13 +637,17 @@ function backup(k) {
     m.querySelector("#j").select();
   } else {
     var m2 = openSheet(
-      '<b>导入备份</b><div class="mute">粘贴备份文字，会覆盖现有数据</div><textarea id="j"></textarea><button class="btn" id="go">导入</button>',
+      '<b>导入备份</b><div class="mute">粘贴备份文字，会合并到现有数据里（不会删除你现有的记录）</div><textarea id="j"></textarea><button class="btn" id="go">导入</button>',
     );
     m2.querySelector("#go").onclick = function () {
       try {
         var d = JSON.parse(m2.querySelector("#j").value);
         if (!d.accounts || !d.tx) throw 0;
-        S = d;
+        LM.snapshot(S, true);
+        d._t = 0; // 导入只补充记录，现有设置与记录不会被删掉
+        var pn2 = S.pin;
+        S = LM.merge(S, d);
+        S.pin = pn2;
         migrate();
         save();
         m2.remove();
@@ -792,7 +810,8 @@ function runRec() {
       var d = m + "-" + ("0" + r.day).slice(-2);
       if (d > td) break;
       S.tx.push({
-        id: uid(),
+        // 固定 id：两台设备同一天各自生成定期记账时，合并后不会变成两笔
+        id: "rc_" + r.id + "_" + m,
         ts: Date.now(),
         type: "expense",
         amt: r.amt,
@@ -1641,6 +1660,38 @@ function ser(o) {
   });
   return JSON.stringify(c);
 }
+// 取“我的账本”（不管当前正在看哪一本）
+function getMine() {
+  return cur === "mine" ? S : MINE;
+}
+// 把合并后的结果装回“我的账本”并存到本机
+function adoptMine(m) {
+  if (cur === "mine") {
+    var pn = S.pin;
+    S = m;
+    S.pin = pn;
+    migrate();
+    LM.rebase("mine", S);
+    try {
+      localStorage.setItem(KEY, JSON.stringify(S));
+    } catch (e) {
+      toast("手机存储空间不足，请先导出备份");
+    }
+    render();
+  } else {
+    var sv = S;
+    S = m;
+    S.pin = MINE.pin;
+    migrate();
+    MINE = S;
+    S = sv;
+    LM.rebase("mine", MINE);
+    try {
+      localStorage.setItem(KEY, JSON.stringify(MINE));
+    } catch (e) {}
+  }
+}
+// 同步（先读云端 → 合并 → 再写回）。只合并不覆盖；读不到云端就不写，等重试
 function sync(o, tries) {
   if (!DBR || !lsGet()) return;
   tries = tries || 0;
@@ -1648,50 +1699,58 @@ function sync(o, tries) {
   clearTimeout(stm);
   stm = setTimeout(
     function () {
-      if (PRV)
-        PRV.set({ json: JSON.stringify(privOf(o || S)), t: Date.now() }).catch(function () {});
-      DBR.set({ json: ser(o), t: Date.now() })
+      var mine = getMine() || o;
+      if (!mine) return;
+      if (PRV) PRV.set({ json: JSON.stringify(privOf(mine)), t: Date.now() }).catch(function () {});
+      DBR.get()
+        .then(function (sn) {
+          var cur0 = getMine(),
+            merged = cur0,
+            remote = null;
+          if (sn.exists && sn.data().json) {
+            remote = JSON.parse(sn.data().json);
+            merged = LM.merge(cur0, remote);
+            if (!LM.same(merged, cur0)) {
+              LM.snapshot(cur0, true);
+              adoptMine(merged);
+              merged = getMine();
+            }
+          }
+          if (remote && LM.same(JSON.parse(ser(merged)), remote)) return;
+          return DBR.set({ json: ser(merged), t: Date.now() });
+        })
         .then(function () {
           dirty = false;
         })
         .catch(function () {
-          // 上传失败时不能当作已同步，否则对方的旧数据会覆盖本地新记录；退避重试
-          if (tries < 5) {
+          // 失败不能当作已同步：退避重试，全部失败也不会丢数据（本机已保存）
+          if (tries < 6) {
             sync(o, tries + 1);
           } else {
             dirty = false;
-            toast("同步失败，数据已保存在本机，请检查网络后再记一笔重试");
+            toast("同步失败，数据已保存在本机，网络恢复后再记一笔会自动重试");
           }
         });
     },
     tries ? Math.min(30000, 2000 * Math.pow(2, tries - 1)) : 600,
   );
 }
+// 收到云端数据：合并进本机（不再整份覆盖）
 function applyRemote(d) {
-  if (cur !== "mine") return;
-  var old = S,
-    p = S.pin;
+  var r;
   try {
-    if (old && ((old.tx || []).length || (old.goals || []).length))
-      localStorage.setItem("ledger.bak", JSON.stringify(old));
-  } catch (e) {}
-  try {
-    S = JSON.parse(d);
+    r = JSON.parse(d);
   } catch (e) {
     return;
   }
-  S.pin = p;
-  ["tx", "goals", "wish", "ann"].forEach(function (k) {
-    var pv = (old[k] || []).filter(function (i) {
-      return i.p;
-    });
-    if (pv.length) S[k] = (S[k] || []).concat(pv);
-  });
-  migrate();
-  try {
-    localStorage.setItem(KEY, JSON.stringify(S));
-  } catch (e) {}
-  render();
+  var cur0 = getMine();
+  if (!cur0) return;
+  var merged = LM.merge(cur0, r);
+  if (!LM.same(merged, cur0)) {
+    LM.snapshot(cur0, true);
+    adoptMine(merged);
+  }
+  if (!LM.same(JSON.parse(ser(getMine())), r)) sync();
 }
 async function initShare() {
   try {
@@ -1727,21 +1786,37 @@ async function initShare() {
     LC = c.collection("ledgers");
     JD = c.doc("joint/main");
     JD.onSnapshot(function (sn) {
-      if (djt) return;
       if (!sn.exists) {
         jEmpty = true;
         return;
       }
       var j = sn.data().json;
       if (!j) return;
-      var o = JSON.parse(j);
+      var o;
+      try {
+        o = JSON.parse(j);
+      } catch (e) {
+        return;
+      }
+      var loc = cur === "joint" ? S : JOINT;
+      var merged = loc ? LM.merge(loc, o) : LM.ids(o);
+      if (loc && LM.same(merged, loc)) {
+        if (!LM.same(merged, o)) syncJ();
+        return;
+      }
+      if (loc) LM.snapshot(loc, true);
       if (cur === "joint") {
         var p = S.pin;
-        S = o;
+        S = merged;
         S.pin = p;
         migrate();
+        LM.rebase("joint", S);
         render();
-      } else JOINT = o;
+      } else {
+        JOINT = merged;
+        LM.rebase("joint", JOINT);
+      }
+      if (!LM.same(merged, o)) syncJ();
     });
     LC.onSnapshot(function (sn) {
       others = {};
@@ -1771,17 +1846,13 @@ async function initShare() {
     shState = "ok";
     DBR.onSnapshot(
       function (sn) {
-        if (cur !== "mine" || !lsGet() || dirty) return;
+        if (!lsGet()) return;
         if (!sn.exists) {
           sync();
           return;
         }
-        var j = sn.data().json,
-          rt = sn.data().t || 0;
-        if (j && j !== ser()) {
-          if (rt > (S._t || 0)) applyRemote(j);
-          else sync();
-        }
+        var j = sn.data().json;
+        if (j) applyRemote(j);
       },
       function () {
         shState = "off";
@@ -1861,22 +1932,58 @@ function shareCard() {
     "</div>"
   );
 }
-function syncJ() {
+function syncJ(tries) {
   if (!JD) return;
+  tries = tries || 0;
   djt = true;
   clearTimeout(jtm);
-  var c = JSON.parse(JSON.stringify(S));
-  delete c.pin;
-  var js = JSON.stringify(c);
-  jtm = setTimeout(function () {
-    JD.set({ json: js, t: Date.now() })
-      .then(function () {
+  jtm = setTimeout(
+    function () {
+      var loc = cur === "joint" ? S : JOINT;
+      if (!loc) {
         djt = false;
-      })
-      .catch(function () {
-        djt = false;
-      });
-  }, 600);
+        return;
+      }
+      JD.get()
+        .then(function (sn) {
+          var merged = loc,
+            remote = null;
+          if (sn.exists && sn.data().json) {
+            remote = JSON.parse(sn.data().json);
+            merged = LM.merge(loc, remote);
+            if (!LM.same(merged, loc)) {
+              LM.snapshot(loc, true);
+              if (cur === "joint") {
+                var p = S.pin;
+                S = merged;
+                S.pin = p;
+                migrate();
+                LM.rebase("joint", S);
+                render();
+              } else {
+                JOINT = merged;
+                LM.rebase("joint", JOINT);
+              }
+            }
+          }
+          var c = JSON.parse(JSON.stringify(merged));
+          delete c.pin;
+          if (remote && LM.same(c, remote)) return;
+          return JD.set({ json: JSON.stringify(c), t: Date.now() });
+        })
+        .then(function () {
+          djt = false;
+        })
+        .catch(function () {
+          if (tries < 6) syncJ(tries + 1);
+          else {
+            djt = false;
+            toast("共同账本同步失败，数据已保存在本机");
+          }
+        });
+    },
+    tries ? Math.min(30000, 2000 * Math.pow(2, tries - 1)) : 600,
+  );
 }
 function sw(to, id) {
   if (to === cur && to !== "other") return;
@@ -1902,6 +2009,7 @@ function sw(to, id) {
   } else S = JSON.parse(others[o]);
   if (to !== "mine") S.pin = MINE.pin;
   migrate();
+  if (to === "joint") LM.ensure("joint", S);
   if (to === "joint") runRec();
   if (fresh) syncJ();
   tab = "home";
@@ -2814,6 +2922,7 @@ function mirror(rec, del) {
       date: rec.date,
     });
   }
+  LM.track("mine", MINE);
   try {
     localStorage.setItem(KEY, JSON.stringify(MINE));
   } catch (e) {}

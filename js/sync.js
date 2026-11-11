@@ -82,7 +82,16 @@
   async function toDoc(v) {
     if (!v || !v.c) return null;
     var j = await de(v.c);
-    return j == null ? null : { json: j, t: v.t || 0, name: v.n || "" };
+    // 解密失败不能当成“云端没有数据”，否则会用本机数据覆盖云端
+    if (j == null) throw new Error("decrypt");
+    return { json: j, t: v.t || 0, name: v.n || "" };
+  }
+  async function toDocSafe(v) {
+    try {
+      return await toDoc(v);
+    } catch (e) {
+      return null;
+    }
   }
   function snapOf(d, id) {
     return {
@@ -163,7 +172,7 @@
               var raw = (await rd(p)) || {},
                 docs = [];
               for (var id in raw) {
-                var d = await toDoc(raw[id]);
+                var d = await toDocSafe(raw[id]);
                 if (d) {
                   NAMES[id] = d.name;
                   (function (dd, ii) {
