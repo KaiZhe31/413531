@@ -1641,20 +1641,31 @@ function ser(o) {
   });
   return JSON.stringify(c);
 }
-function sync(o) {
+function sync(o, tries) {
   if (!DBR || !lsGet()) return;
+  tries = tries || 0;
   dirty = true;
   clearTimeout(stm);
-  stm = setTimeout(function () {
-    if (PRV) PRV.set({ json: JSON.stringify(privOf(o || S)), t: Date.now() }).catch(function () {});
-    DBR.set({ json: ser(o), t: Date.now() })
-      .then(function () {
-        dirty = false;
-      })
-      .catch(function () {
-        dirty = false;
-      });
-  }, 600);
+  stm = setTimeout(
+    function () {
+      if (PRV)
+        PRV.set({ json: JSON.stringify(privOf(o || S)), t: Date.now() }).catch(function () {});
+      DBR.set({ json: ser(o), t: Date.now() })
+        .then(function () {
+          dirty = false;
+        })
+        .catch(function () {
+          // 上传失败时不能当作已同步，否则对方的旧数据会覆盖本地新记录；退避重试
+          if (tries < 5) {
+            sync(o, tries + 1);
+          } else {
+            dirty = false;
+            toast("同步失败，数据已保存在本机，请检查网络后再记一笔重试");
+          }
+        });
+    },
+    tries ? Math.min(30000, 2000 * Math.pow(2, tries - 1)) : 600,
+  );
 }
 function applyRemote(d) {
   if (cur !== "mine") return;
@@ -1937,7 +1948,7 @@ function switcher() {
   );
 }
 var AVC = {};
-var AVIMG = { f: "avatar-f.jpg", m: "avatar-m.jpg" };
+var AVIMG = { f: "img/avatar-f.jpg", m: "img/avatar-m.jpg" };
 var AVI = { f: new Image(), m: new Image() };
 AVI.f.src = AVIMG.f;
 AVI.m.src = AVIMG.m;
