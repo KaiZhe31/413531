@@ -118,6 +118,15 @@ main{position:relative;z-index:1}nav,.fab{z-index:6}
 .sheet{animation:up .22s ease-out}.mask{animation:fd .15s}@keyframes up{from{transform:translateY(40px);opacity:0}}@keyframes fd{from{opacity:0}}
 .chip,.btn,.fab,.card[data-act]{transition:transform .08s}.chip:active,.btn:active,.fab:active,.card[data-act]:active{transform:scale(.96)}
 .item{padding:12px 0}.card{margin:14px 0}
+/* UI test: 紫粉渐变主题 + 更圆的卡片 */
+:root{--acc:#9b5de5;--accbg:#f1e6ff;--bg:#f8f3ff;--line:#e8dcfa;--shadow:0 6px 18px rgba(155,93,229,.14)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--acc:#c39bff;--accbg:#3b2a55;--bg:#1d1528;--card:#2a1f3a;--line:#43325c}}
+:root[data-theme="dark"]{--acc:#c39bff;--accbg:#3b2a55;--bg:#1d1528;--card:#2a1f3a;--line:#43325c}
+body{background:radial-gradient(circle at 8% 0,#ffe0f0 0,transparent 42%),radial-gradient(circle at 100% 6%,#e3d5ff 0,transparent 40%),var(--bg)}
+.card{border-radius:22px;padding:16px}
+.fab,.btn{background:linear-gradient(135deg,#f15bb5,#9b5de5);color:#fff;box-shadow:0 6px 16px rgba(155,93,229,.35)}
+.chip{border-radius:20px}.chip.on{background:linear-gradient(135deg,#f15bb5,#9b5de5);border-color:transparent;color:#fff}
+.btn{border-radius:16px}
 </style>
 </head>
 <body>
