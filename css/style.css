@@ -1,3 +1,4 @@
+
 :root {
   --bg: #eceee8;
   --card: #fff;
@@ -52,12 +53,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--ink);
-  font:
-    15px/1.5 -apple-system,
-    "PingFang SC",
-    "Noto Sans SC",
-    "Microsoft YaHei",
-    sans-serif;
+  font: 15px/1.5 -apple-system, "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
   padding-bottom: 90px;
 }
 body::before {
@@ -110,15 +106,9 @@ h1 {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
-.exp {
-  color: var(--exp);
-}
-.inc {
-  color: var(--acc);
-}
-.tr {
-  color: var(--tr);
-}
+.exp { color: var(--exp); }
+.inc { color: var(--acc); }
+.tr { color: var(--tr); }
 .ico {
   width: 38px;
   height: 38px;
@@ -133,9 +123,7 @@ h1 {
   padding: 10px 0;
   border-top: 1px solid var(--line);
 }
-.item:first-child {
-  border-top: 0;
-}
+.item:first-child { border-top: 0; }
 .ellip {
   white-space: nowrap;
   overflow: hidden;
@@ -387,31 +375,17 @@ select {
   --tr: #7a6bd6;
   --shadow: 0 3px 10px rgba(232, 80, 107, 0.1);
 }
-.inc {
-  color: #2f9e6e;
-}
-.card {
-  border-radius: 20px;
-  border-color: transparent;
-}
-.ico {
-  border-radius: 14px;
-  font-size: 20px;
-}
+.inc { color: #2f9e6e; }
+.card { border-radius: 20px; border-color: transparent; }
+.ico { border-radius: 14px; font-size: 20px; }
 .btn {
   border-radius: 16px;
   box-shadow: 0 3px 0 rgba(0, 0, 0, 0.12);
 }
-.big {
-  color: var(--acc);
-}
+.big { color: var(--acc); }
 .bar,
-.bar i {
-  border-radius: 6px;
-}
-.seg button.on {
-  color: var(--acc);
-}
+.bar i { border-radius: 6px; }
+.seg button.on { color: var(--acc); }
 nav {
   border-radius: 22px 22px 0 0;
   border: 0;
@@ -438,9 +412,7 @@ nav button.on b {
     --tr: #b3a8ff;
     --shadow: none;
   }
-  :root:not([data-theme="light"]) .inc {
-    color: #6fd3a5;
-  }
+  :root:not([data-theme="light"]) .inc { color: #6fd3a5; }
 }
 :root[data-theme="dark"] {
   --bg: #26171b;
@@ -454,9 +426,7 @@ nav button.on b {
   --tr: #b3a8ff;
   --shadow: none;
 }
-:root[data-theme="dark"] .inc {
-  color: #6fd3a5;
-}
+:root[data-theme="dark"] .inc { color: #6fd3a5; }
 .fab.cam {
   bottom: calc(138px + env(safe-area-inset-bottom, 0px));
   width: 44px;
@@ -483,19 +453,13 @@ body {
 }
 .hero h1,
 .hero .big,
-.hero .mute {
-  color: #fff;
-}
-.hero .mute {
-  opacity: 0.92;
-}
+.hero .mute { color: #fff; }
+.hero .mute { opacity: 0.92; }
 .hero img {
   border: 2px solid rgba(255, 255, 255, 0.85);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
-.hero .big {
-  font-size: 38px;
-}
+.hero .big { font-size: 38px; }
 .fab,
 .btn {
   background: linear-gradient(135deg, #ff8fab, #e8506b);
@@ -505,18 +469,10 @@ nav button.on {
   background: var(--accbg);
   border-radius: 16px;
 }
-nav button {
-  margin: 0 2px;
-}
-.seg {
-  border-radius: 16px;
-}
-.seg button {
-  border-radius: 13px;
-}
-.chip {
-  background: var(--card);
-}
+nav button { margin: 0 2px; }
+.seg { border-radius: 16px; }
+.seg button { border-radius: 13px; }
+.chip { background: var(--card); }
 .chip.on {
   background: linear-gradient(135deg, #ff8fab, #e8506b);
   border-color: transparent;
@@ -571,18 +527,10 @@ body::after {
   opacity: 0.07;
   background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='72' height='72'><text x='6' y='30' font-size='22'>🍓</text><text x='42' y='62' font-size='16'>🍓</text></svg>");
 }
-main {
-  position: relative;
-  z-index: 1;
-}
+main { position: relative; z-index: 1; }
 nav,
-.fab {
-  z-index: 6;
-}
-.hero {
-  position: relative;
-  overflow: hidden;
-}
+.fab { z-index: 6; }
+.hero { position: relative; overflow: hidden; }
 .hero:before {
   content: "✦";
   position: absolute;
@@ -599,41 +547,24 @@ nav,
   font-size: 17px;
   opacity: 0.45;
 }
-.sheet {
-  animation: up 0.22s ease-out;
-}
-.mask {
-  animation: fd 0.15s;
-}
+.sheet { animation: up 0.22s ease-out; }
+.mask { animation: fd 0.15s; }
 @keyframes up {
-  from {
-    transform: translateY(40px);
-    opacity: 0;
-  }
+  from { transform: translateY(40px); opacity: 0; }
 }
 @keyframes fd {
-  from {
-    opacity: 0;
-  }
+  from { opacity: 0; }
 }
 .chip,
 .btn,
 .fab,
-.card[data-act] {
-  transition: transform 0.08s;
-}
+.card[data-act] { transition: transform 0.08s; }
 .chip:active,
 .btn:active,
 .fab:active,
-.card[data-act]:active {
-  transform: scale(0.96);
-}
-.item {
-  padding: 12px 0;
-}
-.card {
-  margin: 14px 0;
-}
+.card[data-act]:active { transform: scale(0.96); }
+.item { padding: 12px 0; }
+.card { margin: 14px 0; }
 /* UI test: 紫粉渐变主题 + 更圆的卡片 */
 :root {
   --acc: #9b5de5;
@@ -663,24 +594,17 @@ body {
     radial-gradient(circle at 8% 0, #ffe0f0 0, transparent 42%),
     radial-gradient(circle at 100% 6%, #e3d5ff 0, transparent 40%), var(--bg);
 }
-.card {
-  border-radius: 22px;
-  padding: 16px;
-}
+.card { border-radius: 22px; padding: 16px; }
 .fab,
 .btn {
   background: linear-gradient(135deg, #f15bb5, #9b5de5);
   color: #fff;
   box-shadow: 0 6px 16px rgba(155, 93, 229, 0.35);
 }
-.chip {
-  border-radius: 20px;
-}
+.chip { border-radius: 20px; }
 .chip.on {
   background: linear-gradient(135deg, #f15bb5, #9b5de5);
   border-color: transparent;
   color: #fff;
 }
-.btn {
-  border-radius: 16px;
-}
+.btn { border-radius: 16px; }
