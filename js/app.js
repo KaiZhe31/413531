@@ -6,10 +6,22 @@ var TYPES = {
   credit: ["信用卡", "💳"],
   invest: ["投资", "📈"],
   saving: ["储蓄", "🐷"],
+  prepaid: ["预付卡 / Prepaid", "📶"],
   other: ["其他", "👛"],
 };
-var CURS = ["MYR", "SGD", "CNY"],
-  SYM = { MYR: "RM ", SGD: "S$", CNY: "CN¥" };
+var CURS_MAIN = ["MYR", "SGD", "CNY"],
+  CURS_MORE = ["USD", "EUR", "GBP", "JPY", "HKD", "THB", "IDR", "KRW", "AUD", "TWD", "VND", "PHP", "INR", "NZD", "CAD"],
+  CURS = CURS_MAIN.concat(CURS_MORE),
+  SYM = {
+    MYR: "RM ", SGD: "S$", CNY: "CN¥",
+    USD: "US$", EUR: "€", GBP: "£", JPY: "JP¥", HKD: "HK$", THB: "฿", IDR: "Rp ", KRW: "₩",
+    AUD: "A$", TWD: "NT$", VND: "₫", PHP: "₱", INR: "₹", NZD: "NZ$", CAD: "C$",
+  },
+  // 其他币种的默认汇率（1 外币 = ? MYR），只是大概值，请在「更多 → 汇率」里按实际修改
+  DEFR = {
+    USD: 4.2, EUR: 4.9, GBP: 5.6, JPY: 0.028, HKD: 0.54, THB: 0.13, IDR: 0.00026, KRW: 0.003,
+    AUD: 2.75, TWD: 0.135, VND: 0.00017, PHP: 0.073, INR: 0.048, NZD: 2.45, CAD: 3.05,
+  };
 var EXPC = [
   "餐饮",
   "交通",
@@ -71,6 +83,23 @@ var P = [
   ["建设银行", "bank", "CNY"],
   ["招商银行", "bank", "CNY"],
   ["农业银行", "bank", "CNY"],
+  ["U Mobile Prepaid", "prepaid", "MYR"],
+  ["Hotlink Prepaid", "prepaid", "MYR"],
+  ["CelcomDigi Prepaid", "prepaid", "MYR"],
+  ["Unifi Mobile Prepaid", "prepaid", "MYR"],
+  ["Yoodo", "prepaid", "MYR"],
+  ["Tune Talk", "prepaid", "MYR"],
+  ["redONE", "prepaid", "MYR"],
+  ["XOX", "prepaid", "MYR"],
+  ["Buzzme", "prepaid", "MYR"],
+  ["Speakout", "prepaid", "MYR"],
+  ["Singtel Prepaid", "prepaid", "SGD"],
+  ["现金 SGD", "cash", "SGD"],
+  ["现金 CNY", "cash", "CNY"],
+  ["现金 USD", "cash", "USD"],
+  ["现金 EUR", "cash", "EUR"],
+  ["现金 JPY", "cash", "JPY"],
+  ["现金 THB", "cash", "THB"],
 ];
 var S = load();
 migrate();
@@ -80,6 +109,9 @@ function migrate() {
   LM.ids(S);
   S.cats = S.cats || { expense: EXPC.slice(), income: INCC.slice() };
   S.rates = S.rates || { MYR: 1, SGD: 3.3, CNY: 0.6 };
+  CURS.forEach(function (c) {
+    if (!(S.rates[c] > 0)) S.rates[c] = DEFR[c] || 1;
+  });
   S.base = S.base || "MYR";
   S.budget = S.budget || {};
   S.rec = S.rec || [];
@@ -96,6 +128,38 @@ function migrate() {
   S.accounts.forEach(function (a) {
     a.cur = a.cur || "MYR";
   });
+}
+function fxText(cur, am, mv) {
+  var r = S.rates[cur] || 0;
+  if (!(am > 0)) return "";
+  if (mv > 0) return "实际汇率 1 " + cur + " = " + (mv / am).toFixed(4) + " MYR";
+  return "按汇率约 RM " + (am * r).toFixed(2);
+}
+function curChips(cur) {
+  var more = CURS_MORE.indexOf(cur) >= 0;
+  function chip(c, x) {
+    return (
+      '<button class="chip' + (c === cur ? " on" : "") + (x ? " mx" : "") + '" data-cu="' + c + '"' +
+      (x && !more ? ' style="display:none"' : "") + ">" + c + "</button>"
+    );
+  }
+  return (
+    CURS_MAIN.map(function (c) { return chip(c, 0); }).join("") +
+    '<button class="chip" data-more="1" style="border-style:dashed">更多币种 ▾</button>' +
+    CURS_MORE.map(function (c) { return chip(c, 1); }).join("")
+  );
+}
+var ratesMore = false;
+function rateRows(list) {
+  return list
+    .map(function (c) {
+      var r = S.rates[c] || 0;
+      return (
+        "<label>1 " + c + " = ? MYR　（1 MYR ≈ " + (r ? (1 / r).toFixed(4) : "-") + " " + c +
+        '）</label><input type="number" inputmode="decimal" step="any" data-rate="' + c + '" value="' + r + '">'
+      );
+    })
+    .join("");
 }
 function conv(n, f, t) {
   return (n * S.rates[f]) / S.rates[t];
@@ -174,7 +238,7 @@ function fmt(n, c) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
-  return (n < 0 ? "-" : "") + SYM[c || S.base] + s;
+  return (n < 0 ? "-" : "") + (SYM[c || S.base] || (c || S.base) + " ") + s;
 }
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
@@ -217,6 +281,8 @@ function monthTx(m, a) {
   });
 }
 function cvt(x, t) {
+  // 手动填了实际 MYR 金额的外币记录，直接用它
+  if (t.myr > 0 && x === t.amt && t.type !== "transfer") return conv(+t.myr, "MYR", S.base);
   var a = acc(t.acc);
   return conv(x, a ? a.cur : t.cur || "MYR", S.base);
 }
@@ -320,6 +386,13 @@ function txRow(t) {
       (t.aa ? " · AA" : "") +
       (t.gift ? " · 🎁" : t.p ? " · 🔒" : "") +
       (t.img ? " · 📎" : "");
+  var fx = "";
+  if (t.type !== "transfer" && a.cur && a.cur !== "MYR" && S.rates[a.cur])
+    fx =
+      '<div class="mute" style="font-size:11px;font-weight:400;text-align:right">' +
+      (t.myr > 0 ? "= " : "≈ ") +
+      fmt(t.myr > 0 ? t.myr : t.amt * S.rates[a.cur], "MYR") +
+      "</div>";
   return (
     '<div class="item row" data-tx="' +
     t.id +
@@ -334,6 +407,7 @@ function txRow(t) {
     '">' +
     sign +
     fmt(t.amt, a.cur).replace("-", "") +
+    fx +
     "</div></div>"
   );
 }
@@ -725,7 +799,7 @@ function stats() {
 function settings() {
   var h =
     '<div class="row" style="margin-bottom:14px"><canvas id="lg2" width="96" height="96" style="width:48px;height:48px;border-radius:11px"></canvas><div><b>账本</b><div class="mute">记账 · 转账 · 多币种</div></div></div><b>主货币</b><div class="mute">总览、账单、统计会换算成这个币种</div><div class="chips" style="margin:8px 0">' +
-    CURS.map(function (c) {
+    CURS_MAIN.map(function (c) {
       return (
         '<button class="chip' +
         (c === S.base ? " on" : "") +
@@ -736,21 +810,12 @@ function settings() {
         "</button>"
       );
     }).join("") +
-    '</div><div class="card"><b>汇率（手动设置）</b>' +
-    ["SGD", "CNY"]
-      .map(function (c) {
-        return (
-          "<label>1 " +
-          c +
-          ' = ? MYR</label><input type="number" inputmode="decimal" step="0.0001" data-rate="' +
-          c +
-          '" value="' +
-          S.rates[c] +
-          '">'
-        );
-      })
-      .join("") +
-    "</div>";
+    '</div><div class="card"><b>汇率（1 外币 = 多少 MYR，可手动修改）</b>' +
+    rateRows(["SGD", "CNY"]) +
+    "<details" + (ratesMore ? " open" : "") +
+    ' style="margin-top:12px"><summary class="mute" style="cursor:pointer">其他币种汇率（USD、EUR、JPY…）</summary>' +
+    rateRows(CURS_MORE) +
+    "</details></div>";
   [
     ["expense", "支出分类"],
     ["income", "收入分类"],
@@ -884,18 +949,8 @@ function accSheet2(id) {
           );
         })
         .join("") +
-      '</div><label>币种</label><div class="chips" id="cu">' +
-      CURS.map(function (c) {
-        return (
-          '<button class="chip' +
-          (c === cur ? " on" : "") +
-          '" data-cu="' +
-          c +
-          '">' +
-          c +
-          "</button>"
-        );
-      }).join("") +
+      '</div><label>币种（常用 MYR / SGD / CNY，其他点「更多币种」）</label><div class="chips" id="cu">' +
+      curChips(cur) +
       '</div><label>信用卡还款日（每月几号，选填）</label><input id="du" type="number" min="1" max="28" value="' +
       (a.due || "") +
       '"><label>初始余额（信用卡欠款填负数）</label><input id="b" type="number" inputmode="decimal" step="0.01" value="' +
@@ -923,6 +978,10 @@ function accSheet2(id) {
     } else if (b.dataset.k) {
       type = b.dataset.k;
       mark("#ty", "k", type);
+    } else if (b.dataset.more) {
+      m.querySelectorAll("#cu .mx").forEach(function (x) {
+        x.style.display = x.style.display === "none" ? "" : "none";
+      });
     } else if (b.dataset.cu) {
       cur = b.dataset.cu;
       mark("#cu", "cu", cur);
@@ -1677,6 +1736,15 @@ var BR = [
   ["建设", "#003D8F", "建"],
   ["招商", "#C8161D", "招"],
   ["农业", "#00844F", "农"],
+  ["u mobile", "#F26522", "U"],
+  ["hotlink", "#E4002B", "HL"],
+  ["yoodo", "#FFE600", "Yo", "#222"],
+  ["tune talk", "#E4002B", "TT"],
+  ["redone", "#E31E24", "rO"],
+  ["xox", "#00A0DF", "XOX"],
+  ["buzzme", "#6C2BD9", "Bz"],
+  ["speakout", "#F7941D", "SO"],
+  ["singtel", "#E60012", "St"],
 ];
 function brand(n) {
   n = (n || "").toLowerCase();
@@ -3609,6 +3677,7 @@ function txSheet(edit, pre) {
       '"><div class="mute" style="text-align:center">' +
       ((acc(t.acc) || {}).cur || "") +
       "</div>" +
+      myrF() +
       (st.type === "transfer"
         ? '<label>转出账户</label><select id="acc">' +
           opts(t.acc) +
@@ -3758,6 +3827,19 @@ function txSheet(edit, pre) {
       "</div>"
     );
   }
+  function myrF() {
+    var a = acc(t.acc);
+    if (st.type === "transfer" || !a || a.cur === "MYR" || !S.rates[a.cur]) return "";
+    var am = parseFloat(t.amt),
+      r = S.rates[a.cur];
+    return (
+      '<div class="card" style="margin:8px 0;background:var(--accbg);box-shadow:none"><div class="mute">汇率 1 ' +
+      a.cur + " = " + r + ' MYR</div><label style="margin-top:8px">折合 MYR（可手动改成实际扣款金额，不填则按汇率）</label><input id="myr" type="number" inputmode="decimal" step="0.01" placeholder="' +
+      (am > 0 ? (am * r).toFixed(2) : "") + '" value="' + esc(t.myr || "") +
+      '"><div class="mute" id="fxr" style="margin-top:4px">' +
+      fxText(a.cur, am, parseFloat(t.myr)) + "</div></div>"
+    );
+  }
   function toF() {
     var a = acc(t.acc),
       b = acc(t.to);
@@ -3783,6 +3865,7 @@ function txSheet(edit, pre) {
     t.to = g("to") || t.to;
     t.fee = g("fee");
     t.toAmt = g("ta");
+    t.myr = g("myr");
     var aq = sh.querySelector("#aa");
     if (aq) t.aa = aq.checked;
     var pq = sh.querySelector("#pv");
@@ -3800,6 +3883,18 @@ function txSheet(edit, pre) {
     t.note = g("nt");
   }
   draw();
+  sh.addEventListener("input", function (e) {
+    var id = e.target.id;
+    if (id !== "amt" && id !== "myr") return;
+    var sel = sh.querySelector("#acc"),
+      ao = acc(sel ? sel.value : t.acc),
+      mi = sh.querySelector("#myr"),
+      info = sh.querySelector("#fxr");
+    if (!ao || !mi) return;
+    var am = parseFloat(sh.querySelector("#amt").value);
+    mi.placeholder = am > 0 ? (am * (S.rates[ao.cur] || 0)).toFixed(2) : "";
+    if (info) info.textContent = fxText(ao.cur, am, parseFloat(mi.value));
+  });
   sh.addEventListener("change", function (e) {
     if (e.target.id === "rimg" && e.target.files[0]) {
       keep();
@@ -3913,6 +4008,9 @@ function txSheet(edit, pre) {
         date: t.date,
         note: t.note,
       };
+      var fa0 = acc(t.acc),
+        mv = parseFloat(t.myr);
+      if (st.type !== "transfer" && fa0 && fa0.cur !== "MYR" && mv > 0) rec.myr = mv;
       if (cur === "joint" && st.type !== "transfer") {
         var py = t.pay || "joint";
         rec.pay = py;
@@ -4124,6 +4222,7 @@ document.addEventListener("change", function (e) {
   if (e.target.dataset.rate) {
     var v = parseFloat(e.target.value);
     if (v > 0) {
+      if (e.target.closest("details")) ratesMore = true;
       S.rates[e.target.dataset.rate] = v;
       save();
       render();
