@@ -1,5 +1,4 @@
-var KEY = "ledger.v1",
-  KEY_JOINT = "ledger.joint";
+var KEY = "ledger.v1";
 var TYPES = {
   cash: ["现金", "💵"],
   bank: ["银行卡", "🏦"],
@@ -146,24 +145,12 @@ function load() {
     tx: [],
   };
 }
-function loadJoint() {
-  try {
-    var r = localStorage.getItem(KEY_JOINT);
-    if (r) return JSON.parse(r);
-  } catch (e) {}
-  return null;
-}
 function save() {
   if (RO) return;
+  // 先记下新增/修改/删除（_u 与删除墓碑），同步合并时才不会丢记录
   LM.track(cur === "joint" ? "joint" : "mine", S);
   S._t = Date.now();
   if (cur === "joint") {
-    try {
-      localStorage.setItem(KEY_JOINT, JSON.stringify(S));
-    } catch (e) {
-      toast("手机存储空间不足，请先导出备份");
-    }
-    LM.snapshot(S);
     syncJ();
     return;
   }
@@ -191,7 +178,7 @@ function fmt(n, c) {
 }
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
-    return { "&": "&", "<": "<", ">": ">", '"': """ }[c];
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
   });
 }
 function acc(id) {
@@ -231,17 +218,7 @@ function monthTx(m, a) {
 }
 function cvt(x, t) {
   var a = acc(t.acc);
-  var srcCur = a ? a.cur : t.cur || "MYR";
-  if (
-    t &&
-    t.myrAmt != null &&
-    x === t.amt &&
-    S.base === "MYR" &&
-    srcCur === "MYR"
-  ) {
-    return t.myrAmt;
-  }
-  return conv(x, srcCur, S.base);
+  return conv(x, a ? a.cur : t.cur || "MYR", S.base);
 }
 function sums(list) {
   var i = 0,
@@ -266,6 +243,12 @@ function render() {
   else if (tab === "accts") h = accts() + peers();
   else if (tab === "stats") h = stats();
   else h = settings();
+  if (0)
+    h =
+      '<div class="card row" style="background:var(--accbg)"><div class="sp"><b>正在查看 ' +
+      esc(names[viewId] || "对方") +
+      ' 的账本</b><div class="mute">只读，不能修改</div></div><button class="chip on" data-act="back">返回我的</button></div>' +
+      h;
   document.getElementById("fab").style.display = RO ? "none" : "";
   document.getElementById("cam").style.display = camOK && !RO ? "" : "none";
   h =
@@ -326,15 +309,10 @@ function txRow(t) {
   } else {
     title = esc(t.cat) + (t.sub ? " · " + esc(t.sub) : "");
     sub = esc(a.name);
-    if (t.origCur && t.origAmt != null && t.origCur !== (a.cur || "MYR")) {
-      sub += " · 原币 " + fmt(t.origAmt, t.origCur);
-    } else if (t.origCur === "MYR" && a.cur && a.cur !== "MYR" && t.myrAmt != null) {
-      sub += " · " + fmt(t.myrAmt, "MYR");
-    }
     cls = t.type === "income" ? "inc" : "exp";
     sign = t.type === "income" ? "+" : "-";
   }
-  if (t.note) sub += " " + esc(t.note);
+  if (t.note) sub += "　" + esc(t.note);
   if (t.by)
     sub +=
       " · " +
@@ -371,16 +349,6 @@ function home() {
     else debt += b;
   });
   var m = sums(monthTx(mk(new Date())));
-  var curWk = getWeekInfo(new Date());
-  var wkMap = {};
-  curWk.days.forEach(function (d) {
-    wkMap[d] = true;
-  });
-  var wSums = sums(
-    S.tx.filter(function (t) {
-      return wkMap[t.date];
-    })
-  );
   var recent = S.tx
     .slice()
     .sort(function (a, b) {
@@ -394,7 +362,7 @@ function home() {
     fmt(net) +
     '</div><div class="mute">资产 ' +
     fmt(asset) +
-    (debt ? " 负债 " + fmt(debt) : "") +
+    (debt ? "　负债 " + fmt(debt) : "") +
     "</div>" +
     moodBubble() +
     "</div>" +
@@ -405,13 +373,6 @@ function home() {
     '</div></div><div class="sp"><div class="mute">结余</div><div class="num" style="font-size:20px">' +
     fmt(m.i - m.e) +
     "</div></div></div>" +
-    '<div class="card row" data-go="stats" style="cursor:pointer"><div class="sp"><div class="mute">本周总支出（' +
-    curWk.startDate.slice(5).replace("-", "/") +
-    " - " +
-    curWk.endDate.slice(5).replace("-", "/") +
-    '）</div><div class="num exp" style="font-size:20px;margin-top:2px">' +
-    fmt(wSums.e) +
-    '</div></div><span class="chip">查看详情 ›</span></div>' +
     todayCard() +
     askCard() +
     annCard() +
@@ -443,13 +404,6 @@ function bills() {
       return b.date.localeCompare(a.date) || b.ts - a.ts;
     }),
     s = sums(list);
-  var dayMap = {};
-  list.forEach(function (t) {
-    dayMap[t.date] = dayMap[t.date] || { e: 0, i: 0 };
-    if (t.type === "expense") dayMap[t.date].e += cvt(t.amt, t);
-    else if (t.type === "income") dayMap[t.date].i += cvt(t.amt, t);
-    else if (t.type === "transfer" && t.fee) dayMap[t.date].e += cvt(t.fee, t);
-  });
   var h =
     '<div class="mnav"><button data-m="-1" aria-label="上个月">‹</button><b>' +
     mon.getFullYear() +
@@ -480,25 +434,10 @@ function bills() {
     "</div></div></div>";
   if (!list.length) return h + '<div class="empty">这个月没有记录</div>';
   var cur = "";
-  var WKS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
   list.forEach(function (t) {
     if (t.date !== cur) {
       cur = t.date;
-      var dObj = new Date(cur.replace(/-/g, "/")),
-        wk = isNaN(dObj.getDay()) ? "" : " " + WKS[dObj.getDay()],
-        ds = dayMap[cur] || { e: 0, i: 0 },
-        tag = cur === today() ? " 今天" : "",
-        smStr = "支出 " + fmt(ds.e);
-      if (ds.i > 0) smStr += " · 收入 " + fmt(ds.i);
-      h +=
-        '<div class="date"><span>' +
-        cur.slice(5).replace("-", "月") +
-        "日" +
-        wk +
-        tag +
-        '</span><span style="font-weight:600">' +
-        smStr +
-        "</span></div>";
+      h += '<div class="date">' + cur.slice(5).replace("-", "月") + "日</div>";
     }
     h += '<div class="card" style="margin:6px 0;padding:0 14px">' + txRow(t) + "</div>";
   });
@@ -518,368 +457,16 @@ function accts() {
   );
 }
 
-function shiftDate(ymd, delta) {
-  var p = ymd.split("-");
-  var d = new Date(+p[0], +p[1] - 1, +p[2] + delta);
-  return (
-    d.getFullYear() +
-    "-" +
-    String(d.getMonth() + 1).padStart(2, "0") +
-    "-" +
-    String(d.getDate()).padStart(2, "0")
-  );
-}
-
-function statsDay() {
-  var dList = S.tx.filter(function (t) {
-    return t.date === statDay;
-  });
-  var s = sums(dList);
-  var byCat = {};
-  dList.forEach(function (t) {
-    if (t.type === "expense" || (t.type === "transfer" && t.fee > 0)) {
-      var v = cvt(t.type === "transfer" ? t.fee : t.amt, t);
-      var k = t.type === "transfer" ? "其他" : t.cat;
-      byCat[k] = (byCat[k] || 0) + v;
-    }
-  });
-
-  var WKS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-  var dObj = new Date(statDay.replace(/-/g, "/"));
-  var wkStr = isNaN(dObj.getDay()) ? "" : WKS[dObj.getDay()];
-  var isTdy = statDay === today();
-
-  var h =
-    '<div class="mnav">' +
-    '<button data-d="-1" aria-label="前一天">‹</button>' +
-    "<b>" +
-    statDay.slice(0, 4) +
-    "年" +
-    parseInt(statDay.slice(5, 7)) +
-    "月" +
-    parseInt(statDay.slice(8, 10)) +
-    "日 " +
-    wkStr +
-    (isTdy ? "（今天）" : "") +
-    "</b>" +
-    '<button data-d="1" aria-label="后一天">›</button>' +
-    "</div>";
-
-  if (!isTdy) {
-    h +=
-      '<div style="text-align:center;margin:-6px 0 10px">' +
-      '<button class="chip" data-d="today">回到今天</button>' +
-      "</div>";
-  }
-
-  h +=
-    '<div class="card">' +
-    '<div class="mute">当日总支出</div>' +
-    '<div class="big num exp" style="font-size:32px;margin:4px 0">' +
-    fmt(s.e) +
-    "</div>" +
-    '<div class="row" style="margin-top:10px;font-size:13px;gap:14px">' +
-    '<div><span class="mute">当日收入：</span><b class="inc">' +
-    fmt(s.i) +
-    "</b></div>" +
-    '<div><span class="mute">当日结余：</span><b>' +
-    fmt(s.i - s.e) +
-    "</b></div>" +
-    '<div><span class="mute">共 </span><b>' +
-    dList.length +
-    '</b><span class="mute"> 笔</span></div>' +
-    "</div></div>";
-
-  var catKeys = Object.keys(byCat).sort(function (a, b) {
-    return byCat[b] - byCat[a];
-  });
-  if (catKeys.length) {
-    h += '<div class="card"><b>🏷️ 当日支出分类</b>';
-    catKeys.forEach(function (k) {
-      var p = s.e > 0 ? (byCat[k] / s.e) * 100 : 0;
-      h +=
-        '<div class="item"><div class="row"><span class="sp">' +
-        ci(k) +
-        " " +
-        esc(k) +
-        '</span><span class="num exp">' +
-        fmt(byCat[k]) +
-        '</span><span class="mute" style="width:42px;text-align:right">' +
-        p.toFixed(0) +
-        "%</span></div>" +
-        '<div class="bar"><i style="width:' +
-        p +
-        '%"></i></div></div>';
-    });
-    h += "</div>";
-  }
-
-  h +=
-    '<div class="card" style="padding:4px 14px"><div class="row" style="padding:10px 0 6px;border-bottom:1px solid var(--line)"><b class="sp">📝 当日明细</b></div>';
-  h += dList.length
-    ? dList
-        .slice()
-        .sort(function (a, b) {
-          return b.ts - a.ts;
-        })
-        .map(txRow)
-        .join("")
-    : '<div class="empty">这一天没有记账记录</div>';
-  h += "</div>";
-
-  return h;
-}
-
-function getWeekInfo(date) {
-  var d = new Date(date || new Date());
-  var day = d.getDay();
-  var diffToMon = (day === 0 ? -6 : 1) - day;
-  var monDate = new Date(d);
-  monDate.setDate(d.getDate() + diffToMon);
-  monDate.setHours(0, 0, 0, 0);
-
-  var days = [];
-  for (var i = 0; i < 7; i++) {
-    var cur = new Date(monDate);
-    cur.setDate(monDate.getDate() + i);
-    days.push(
-      cur.getFullYear() +
-        "-" +
-        String(cur.getMonth() + 1).padStart(2, "0") +
-        "-" +
-        String(cur.getDate()).padStart(2, "0")
-    );
-  }
-  var target = new Date(monDate);
-  target.setDate(target.getDate() + 3);
-  var firstThu = new Date(target.getFullYear(), 0, 4);
-  firstThu.setDate(firstThu.getDate() + ((4 - firstThu.getDay() + 7) % 7));
-  var weekNum = 1 + Math.round((target.getTime() - firstThu.getTime()) / (7 * 86400000));
-  if (weekNum < 1) weekNum = 52;
-
-  return {
-    monDate: monDate,
-    startDate: days[0],
-    endDate: days[6],
-    days: days,
-    weekNum: weekNum,
-    year: monDate.getFullYear(),
-    isCurrent: days.indexOf(today()) >= 0,
-  };
-}
-
-function statsWeek() {
-  var wk = getWeekInfo(statWeek);
-  var dayMap = {};
-  wk.days.forEach(function (d) {
-    dayMap[d] = true;
-  });
-  var wList = S.tx.filter(function (t) {
-    return dayMap[t.date];
-  });
-  var s = sums(wList);
-
-  var dayStats = {};
-  var WNAMES = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
-  var WSHORT = ["一", "二", "三", "四", "五", "六", "日"];
-  wk.days.forEach(function (d, idx) {
-    dayStats[d] = { e: 0, i: 0, count: 0, name: WNAMES[idx], sname: WSHORT[idx], date: d };
-  });
-
-  var byCat = {};
-  wList.forEach(function (t) {
-    var v = cvt(t.type === "expense" ? t.amt : t.type === "transfer" ? t.fee || 0 : t.amt, t);
-    if (dayStats[t.date]) {
-      if (t.type === "expense") {
-        dayStats[t.date].e += v;
-        dayStats[t.date].count++;
-        byCat[t.cat] = (byCat[t.cat] || 0) + v;
-      } else if (t.type === "income") {
-        dayStats[t.date].i += v;
-      } else if (t.type === "transfer" && t.fee) {
-        dayStats[t.date].e += v;
-        dayStats[t.date].count++;
-        byCat["其他"] = (byCat["其他"] || 0) + v;
-      }
-    }
-  });
-
-  var maxE = 1;
-  wk.days.forEach(function (d) {
-    if (dayStats[d].e > maxE) maxE = dayStats[d].e;
-  });
-
-  var now = new Date();
-  var daysPassed = 7;
-  if (wk.isCurrent) {
-    var dow = now.getDay();
-    daysPassed = dow === 0 ? 7 : dow;
-  }
-  var dailyAvg = s.e / Math.max(1, daysPassed);
-
-  var sm = wk.startDate.slice(5).replace("-", "月") + "日",
-    em = wk.endDate.slice(5).replace("-", "月") + "日";
-
-  var h =
-    '<div class="mnav">' +
-    '<button data-w="-1" aria-label="上一周">‹</button>' +
-    "<b>" +
-    sm +
-    " - " +
-    em +
-    (wk.isCurrent ? "（本周）" : "（第 " + wk.weekNum + " 周）") +
-    "</b>" +
-    '<button data-w="1" aria-label="下一周">›</button>' +
-    "</div>";
-
-  if (!wk.isCurrent) {
-    h +=
-      '<div style="text-align:center;margin:-6px 0 10px">' +
-      '<button class="chip" data-w="today">回到本周</button>' +
-      "</div>";
-  }
-
-  h +=
-    '<div class="card">' +
-    '<div class="mute">本周总支出</div>' +
-    '<div class="big num exp" style="font-size:32px;margin:4px 0">' +
-    fmt(s.e) +
-    "</div>" +
-    '<div class="row" style="margin-top:10px;font-size:13px;flex-wrap:wrap;gap:12px">' +
-    '<div><span class="mute">日均：</span><b>' +
-    fmt(dailyAvg) +
-    "</b></div>" +
-    '<div><span class="mute">本周收入：</span><b class="inc">' +
-    fmt(s.i) +
-    "</b></div>" +
-    '<div><span class="mute">结余：</span><b>' +
-    fmt(s.i - s.e) +
-    "</b></div>" +
-    "</div>" +
-    "</div>";
-
-  h +=
-    '<div class="card">' +
-    '<div class="row" style="margin-bottom:6px"><b class="sp">📅 每日支出走势</b><span class="mute" style="font-size:12px">单日最高 ' +
-    fmt(maxE) +
-    "</span></div>" +
-    '<div class="wbar-box">';
-
-  wk.days.forEach(function (d) {
-    var st = dayStats[d];
-    var isTdy = d === today();
-    var barHeight = Math.max(3, Math.round((st.e / maxE) * 78));
-    var amtText =
-      st.e > 0
-        ? st.e >= 1000
-          ? Math.round(st.e)
-          : st.e.toFixed(st.e % 1 === 0 ? 0 : 1)
-        : "";
-    h +=
-      '<div class="wbar-col' +
-      (isTdy ? " today" : "") +
-      '">' +
-      '<span class="wbar-amt">' +
-      amtText +
-      "</span>" +
-      '<div class="wbar-pill" style="height:' +
-      barHeight +
-      "px" +
-      (st.e === 0 ? ";opacity:0.25;background:var(--mute)" : "") +
-      '"></div>' +
-      '<span class="wbar-lbl">' +
-      st.sname +
-      "</span>" +
-      '<span class="wbar-sub">' +
-      parseInt(d.slice(8)) +
-      "日</span>" +
-      "</div>";
-  });
-  h += "</div></div>";
-
-  h +=
-    '<div class="card" style="padding:4px 14px">' +
-    '<div class="row" style="padding:10px 0 6px;border-bottom:1px solid var(--line)">' +
-    '<b class="sp">📋 每一天总共开销</b>' +
-    '<span class="mute" style="font-size:12px">共 ' +
-    wList.filter(function (t) {
-      return t.type === "expense" || (t.type === "transfer" && t.fee > 0);
-    }).length +
-    " 笔</span>" +
-    "</div>";
-
-  wk.days
-    .slice()
-    .reverse()
-    .forEach(function (d) {
-      var st = dayStats[d];
-      var isTdy = d === today();
-      var tag = isTdy
-        ? '<span class="chip on" style="font-size:10px;padding:1px 6px;margin-left:4px">今天</span>'
-        : "";
-      h +=
-        '<div class="day-row">' +
-        "<div>" +
-        "<b>" +
-        d.slice(5).replace("-", "月") +
-        "日 " +
-        st.name +
-        "</b>" +
-        tag +
-        '<div class="mute" style="font-size:12px;margin-top:2px">' +
-        (st.count ? st.count + " 笔记录" : "无记录") +
-        (st.i > 0 ? " · 收入 " + fmt(st.i) : "") +
-        "</div>" +
-        "</div>" +
-        '<div class="num ' +
-        (st.e > 0 ? "exp" : "mute") +
-        '" style="font-size:15px;font-weight:700">' +
-        (st.e > 0 ? fmt(st.e) : "0.00") +
-        "</div>" +
-        "</div>";
-    });
-  h += "</div>";
-
-  var catKeys = Object.keys(byCat).sort(function (a, b) {
-    return byCat[b] - byCat[a];
-  });
-  if (catKeys.length) {
-    h += '<div class="card"><b>🏷️ 本周支出分类</b>';
-    catKeys.forEach(function (k) {
-      var p = s.e > 0 ? (byCat[k] / s.e) * 100 : 0;
-      h +=
-        '<div class="item"><div class="row"><span class="sp">' +
-        ci(k) +
-        " " +
-        esc(k) +
-        '</span><span class="num exp">' +
-        fmt(byCat[k]) +
-        '</span><span class="mute" style="width:42px;text-align:right">' +
-        p.toFixed(0) +
-        "%</span></div>" +
-        '<div class="bar"><i style="width:' +
-        p +
-        '%"></i></div></div>';
-    });
-    h += "</div>";
-  }
-
-  return h;
-}
-
-function statsMonth() {
+function stats() {
   var m = mk(mon),
-    mAll = monthTx(m),
-    ms = sums(mAll),
-    list = mAll.filter(function (t) {
-      return t.type === "expense" || (t.type === "transfer" && t.fee > 0);
+    list = monthTx(m).filter(function (t) {
+      return t.type === "expense";
     }),
     by = {},
     tot = 0;
   list.forEach(function (t) {
-    var v = cvt(t.type === "transfer" ? t.fee : t.amt, t);
-    var catName = t.type === "transfer" ? "其他" : t.cat;
-    by[catName] = (by[catName] || 0) + v;
+    var v = cvt(t.amt, t);
+    by[t.cat] = (by[t.cat] || 0) + v;
     tot += v;
   });
   Object.keys(S.budget).forEach(function (k) {
@@ -893,14 +480,7 @@ function statsMonth() {
     mon.getFullYear() +
     "年" +
     (mon.getMonth() + 1) +
-    '月总览</b><button data-m="1" aria-label="下个月">›</button></div>' +
-    '<div class="card row"><div class="sp"><div class="mute">本月支出</div><div class="num exp" style="font-size:20px">' +
-    fmt(ms.e) +
-    '</div></div><div class="sp"><div class="mute">本月收入</div><div class="num inc" style="font-size:20px">' +
-    fmt(ms.i) +
-    '</div></div><div class="sp"><div class="mute">月结余</div><div class="num" style="font-size:20px">' +
-    fmt(ms.i - ms.e) +
-    '</div></div></div><div class="card">';
+    '月支出</b><button data-m="1" aria-label="下个月">›</button></div><div class="card">';
   h += keys.length
     ? keys
         .map(function (k) {
@@ -953,167 +533,8 @@ function statsMonth() {
   });
   return (
     h +
-    '</div><div class="mute" style="margin-top:6px"><span class="inc">■</span> 收入 <span class="exp">■</span> 支出</div></div>'
+    '</div><div class="mute" style="margin-top:6px"><span class="inc">■</span> 收入　<span class="exp">■</span> 支出</div></div>'
   );
-}
-
-function statsYear() {
-  var yStr = String(statYear);
-  var yList = S.tx.filter(function (t) {
-    return t.date.slice(0, 4) === yStr;
-  });
-  var s = sums(yList);
-
-  var mStats = [];
-  var maxM = 1;
-  var byCat = {};
-
-  for (var m = 1; m <= 12; m++) {
-    var mm = yStr + "-" + String(m).padStart(2, "0");
-    var ms = sums(monthTx(mm));
-    mStats.push({ m: m, i: ms.i, e: ms.e });
-    maxM = Math.max(maxM, ms.i, ms.e);
-  }
-
-  yList.forEach(function (t) {
-    if (t.type === "expense" || (t.type === "transfer" && t.fee > 0)) {
-      var v = cvt(t.type === "transfer" ? t.fee : t.amt, t);
-      var k = t.type === "transfer" ? "其他" : t.cat;
-      byCat[k] = (byCat[k] || 0) + v;
-    }
-  });
-
-  var now = new Date();
-  var monthsPassed = statYear === now.getFullYear() ? now.getMonth() + 1 : 12;
-  var monthAvg = s.e / Math.max(1, monthsPassed);
-
-  var h =
-    '<div class="mnav">' +
-    '<button data-y="-1" aria-label="上一年">‹</button>' +
-    "<b>" +
-    statYear +
-    "年全年总览" +
-    (statYear === now.getFullYear() ? "（今年）" : "") +
-    "</b>" +
-    '<button data-y="1" aria-label="下一年">›</button>' +
-    "</div>";
-
-  h +=
-    '<div class="card">' +
-    '<div class="mute">' +
-    statYear +
-    "年总支出</div>" +
-    '<div class="big num exp" style="font-size:32px;margin:4px 0">' +
-    fmt(s.e) +
-    "</div>" +
-    '<div class="row" style="margin-top:10px;font-size:13px;flex-wrap:wrap;gap:12px">' +
-    '<div><span class="mute">月均支出：</span><b>' +
-    fmt(monthAvg) +
-    "</b></div>" +
-    '<div><span class="mute">全年收入：</span><b class="inc">' +
-    fmt(s.i) +
-    "</b></div>" +
-    '<div><span class="mute">全年结余：</span><b class="' +
-    (s.i - s.e >= 0 ? "inc" : "exp") +
-    '">' +
-    fmt(s.i - s.e) +
-    "</b></div>" +
-    "</div></div>";
-
-  h += '<div class="card"><b>📊 1 - 12 月收支趋势</b><div class="mo" style="height:120px">';
-  mStats.forEach(function (x) {
-    h +=
-      '<div><div style="display:flex;align-items:flex-end;gap:2px;flex:1;width:100%;justify-content:center">' +
-      '<span style="width:5px;height:' +
-      (x.i / maxM) * 100 +
-      '%;background:#4fbf8b"></span>' +
-      '<span style="width:5px;height:' +
-      (x.e / maxM) * 100 +
-      '%;background:var(--exp)"></span>' +
-      "</div>" +
-      x.m +
-      "月</div>";
-  });
-  h +=
-    '</div><div class="mute" style="margin-top:6px"><span class="inc">■</span> 收入 <span class="exp">■</span> 支出</div></div>';
-
-  h +=
-    '<div class="card" style="padding:4px 14px"><div class="row" style="padding:10px 0 6px;border-bottom:1px solid var(--line)"><b class="sp">📅 每月收支汇总</b></div>';
-  mStats
-    .slice()
-    .reverse()
-    .forEach(function (x) {
-      if (x.e === 0 && x.i === 0 && statYear === now.getFullYear() && x.m > now.getMonth() + 1)
-        return;
-      h +=
-        '<div class="day-row">' +
-        "<div><b>" +
-        x.m +
-        " 月</b>" +
-        (x.i > 0 ? '<div class="mute" style="font-size:12px">收入 ' + fmt(x.i) + "</div>" : "") +
-        "</div>" +
-        '<div class="num ' +
-        (x.e > 0 ? "exp" : "mute") +
-        '" style="font-size:15px;font-weight:700">' +
-        (x.e > 0 ? "支出 " + fmt(x.e) : "0.00") +
-        "</div></div>";
-    });
-  h += "</div>";
-
-  var catKeys = Object.keys(byCat).sort(function (a, b) {
-    return byCat[b] - byCat[a];
-  });
-  if (catKeys.length) {
-    h += '<div class="card"><b>🏷️ 全年支出分类排行</b>';
-    catKeys.forEach(function (k) {
-      var p = s.e > 0 ? (byCat[k] / s.e) * 100 : 0;
-      h +=
-        '<div class="item"><div class="row"><span class="sp">' +
-        ci(k) +
-        " " +
-        esc(k) +
-        '</span><span class="num exp">' +
-        fmt(byCat[k]) +
-        '</span><span class="mute" style="width:42px;text-align:right">' +
-        p.toFixed(0) +
-        "%</span></div>" +
-        '<div class="bar"><i style="width:' +
-        p +
-        '%"></i></div></div>';
-    });
-    h += "</div>";
-  }
-
-  return h;
-}
-
-function stats() {
-  var switcherHtml =
-    '<div class="seg" style="margin-bottom:12px">' +
-    '<button class="' +
-    (statMode === "day" ? "on" : "") +
-    '" data-stat="day">每天</button>' +
-    '<button class="' +
-    (statMode === "week" ? "on" : "") +
-    '" data-stat="week">每周</button>' +
-    '<button class="' +
-    (statMode === "month" ? "on" : "") +
-    '" data-stat="month">每月</button>' +
-    '<button class="' +
-    (statMode === "year" ? "on" : "") +
-    '" data-stat="year">每年</button>' +
-    "</div>";
-
-  var body =
-    statMode === "day"
-      ? statsDay()
-      : statMode === "week"
-        ? statsWeek()
-        : statMode === "month"
-          ? statsMonth()
-          : statsYear();
-
-  return switcherHtml + body;
 }
 
 function settings() {
@@ -1135,7 +556,7 @@ function settings() {
       .map(function (c) {
         return (
           "<label>1 " +
-          (c === "CNY" ? "RMB (CNY)" : c) +
+          c +
           ' = ? MYR</label><input type="number" inputmode="decimal" step="0.0001" data-rate="' +
           c +
           '" value="' +
@@ -1189,6 +610,7 @@ function backup(k) {
   }
   if (k === "rst") {
     try {
+      // 把最近几份备份全部“合并”回来：只会找回缺的记录，不会删掉现有的
       var bs = LM.backups(),
         before = (S.tx || []).length;
       if (!bs.length) {
@@ -1198,7 +620,7 @@ function backup(k) {
       LM.snapshot(S, true);
       var m = S;
       bs.forEach(function (b) {
-        b._t = 0;
+        b._t = 0; // 让现有数据的设置优先，备份只补记录
         m = LM.merge(m, b);
       });
       var pn = S.pin;
@@ -1212,60 +634,21 @@ function backup(k) {
     return;
   }
   if (k === "out") {
-    var str = JSON.stringify(S, null, 2);
     var m = openSheet(
-      '<b>导出备份</b><div class="mute">复制下面全部文字，或直接下载备份文件保存到手机/网盘</div>' +
-        '<div class="row" style="margin:8px 0">' +
-        '<button class="chip on" id="cp">复制到剪贴板</button>' +
-        '<button class="chip on" id="dlf">下载为 .json 文件</button>' +
-        "</div>" +
-        '<textarea id="j" readonly style="min-height:120px"></textarea>'
+      '<b>导出备份</b><div class="mute">复制下面全部文字，保存到备忘录或发给自己</div><textarea id="j" readonly></textarea>',
     );
-    m.querySelector("#j").value = str;
-    m.querySelector("#cp").onclick = function () {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(str).then(
-          function () {
-            toast("备份已复制到剪贴板");
-          },
-          function () {
-            m.querySelector("#j").select();
-            toast("请手动全选复制");
-          }
-        );
-      } else {
-        m.querySelector("#j").select();
-        toast("请长按全选复制");
-      }
-    };
-    m.querySelector("#dlf").onclick = function () {
-      var blob = new Blob([str], { type: "application/json;charset=utf-8" });
-      var a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = "ledger-backup-" + today().replace(/-/g, "") + ".json";
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(function () {
-        a.remove();
-        URL.revokeObjectURL(a.href);
-      }, 500);
-      toast("备份文件已开始下载");
-    };
+    m.querySelector("#j").value = JSON.stringify(S);
+    m.querySelector("#j").select();
   } else {
     var m2 = openSheet(
-      '<b>导入备份</b><div class="mute">选择 .json 备份文件或粘贴文字，会合并到现有数据里（不会删除现有记录）</div>' +
-        '<div style="margin:8px 0">' +
-        '<input type="file" id="bf" accept=".json,application/json" style="margin-bottom:8px">' +
-        "</div>" +
-        '<textarea id="j" placeholder="或在此粘贴备份 JSON 内容…"></textarea>' +
-        '<button class="btn" id="go">导入并合并</button>'
+      '<b>导入备份</b><div class="mute">粘贴备份文字，会合并到现有数据里（不会删除你现有的记录）</div><textarea id="j"></textarea><button class="btn" id="go">导入</button>',
     );
-    var applyBackup = function (text) {
+    m2.querySelector("#go").onclick = function () {
       try {
-        var d = JSON.parse(text);
-        if (!d || !d.accounts || !d.tx) throw 0;
+        var d = JSON.parse(m2.querySelector("#j").value);
+        if (!d.accounts || !d.tx) throw 0;
         LM.snapshot(S, true);
-        d._t = 0;
+        d._t = 0; // 导入只补充记录，现有设置与记录不会被删掉
         var pn2 = S.pin;
         S = LM.merge(S, d);
         S.pin = pn2;
@@ -1273,27 +656,13 @@ function backup(k) {
         save();
         m2.remove();
         render();
-        toast("导入成功，数据已合并");
       } catch (e) {
-        alert("备份内容无法识别，请确认文件或内容完整");
+        alert("备份内容无法识别");
       }
-    };
-    m2.querySelector("#bf").onchange = function (e) {
-      var f = e.target.files && e.target.files[0];
-      if (!f) return;
-      var rd = new FileReader();
-      rd.onload = function () {
-        m2.querySelector("#j").value = rd.result;
-        applyBackup(rd.result);
-      };
-      rd.readAsText(f);
-    };
-    m2.querySelector("#go").onclick = function () {
-      applyBackup(m2.querySelector("#j").value.trim());
     };
   }
 }
-function accSheet(id) {
+function accSheet2(id) {
   var isNew = id === "new",
     a = isNew ? { name: "", type: "bank", cur: "MYR", bal: 0 } : acc(id),
     type = a.type,
@@ -1349,7 +718,7 @@ function accSheet(id) {
       '"><label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="hd"' +
       (a.hide ? " checked" : "") +
       '> 隐藏这个账户（不在总览和记账选择里显示）</label><button class="btn" id="ok">保存</button>' +
-      (isNew ? "" : '<button class="btn ghost" id="del">删除账户</button>')
+      (isNew ? "" : '<button class="btn ghost" id="del">删除账户</button>'),
   );
   function mark(s, k, v) {
     m.querySelectorAll(s + " .chip").forEach(function (x) {
@@ -1430,14 +799,7 @@ function accSheet(id) {
 }
 function matchQ(t) {
   var a = acc(t.acc) || {},
-    s =
-      (t.cat || "") +
-      (t.sub ? "/" + t.sub : "") +
-      (t.note || "") +
-      (a.name || "") +
-      t.amt +
-      (t.origAmt || "") +
-      (t.origCur || "");
+    s = (t.cat || "") + (t.sub ? "/" + t.sub : "") + (t.note || "") + (a.name || "") + t.amt;
   return s.toLowerCase().indexOf(fQ.toLowerCase()) >= 0;
 }
 function nx(m) {
@@ -1452,6 +814,7 @@ function runRec() {
       var d = m + "-" + ("0" + r.day).slice(-2);
       if (d > td) break;
       S.tx.push({
+        // 固定 id：两台设备同一天各自生成定期记账时，合并后不会变成两笔
         id: "rc_" + r.id + "_" + m,
         ts: Date.now(),
         type: "expense",
@@ -1607,6 +970,50 @@ function more() {
     "</div></div>";
   return h;
 }
+function recSheet() {
+  var m = openSheet(
+    '<b>定期账单</b><label>名称</label><input id="rn" placeholder="房租、Unifi、Netflix"><label>金额</label><input id="ra" type="number" inputmode="decimal" step="0.01"><label>扣款账户</label><select id="rc">' +
+      S.accounts
+        .map(function (a) {
+          return '<option value="' + a.id + '">' + esc(a.name) + " (" + a.cur + ")</option>";
+        })
+        .join("") +
+      '</select><label>分类</label><select id="rt">' +
+      S.cats.expense
+        .map(function (c) {
+          return "<option>" + esc(c) + "</option>";
+        })
+        .join("") +
+      '</select><label>每月几号</label><input id="rd" type="number" min="1" max="28" value="1">' +
+      recJ() +
+      '<button class="btn" id="ok">保存</button>',
+  );
+  m.querySelector("#ok").onclick = function () {
+    var g = function (i) {
+        return m.querySelector("#" + i).value;
+      },
+      n = g("rn").trim(),
+      a = parseFloat(g("ra")),
+      d = Math.min(28, Math.max(1, parseInt(g("rd")) || 1));
+    if (!n || !(a > 0) || !S.accounts.length) {
+      alert("请填写名称和金额");
+      return;
+    }
+    var td = new Date(),
+      r = { id: uid(), name: n, amt: a, acc: g("rc"), cat: g("rt"), day: d };
+    var rp = m.querySelector("#rp");
+    if (rp) {
+      r.byId = rp.value;
+      r.by = rp.options[rp.selectedIndex].dataset.n;
+      if (m.querySelector("#ra2").checked) r.aa = 1;
+    }
+    if (d <= td.getDate()) r.last = mk(td);
+    S.rec.push(r);
+    save();
+    m.remove();
+    render();
+  };
+}
 function act(a, i) {
   if (a === "addrec") recSheet();
   else if (a === "delrec") {
@@ -1681,16 +1088,9 @@ function act(a, i) {
     save();
     render();
   } else if (a === "settle") {
-    var btn = document.querySelector('[data-act="settle"]');
-    if (btn && !btn.dataset.s) {
-      btn.dataset.s = "1";
-      btn.textContent = "再点一次确认已结清";
-      return;
-    }
     S.settled = Date.now();
     save();
     render();
-    toast("AA 账单已标记结清");
   } else if (a === "setup") {
     setupSync();
   } else if (a === "ask") {
@@ -1788,6 +1188,33 @@ function drawIcon(c) {
     return;
   }
   bear(c, "f", 1);
+  return;
+  var x = c.getContext("2d"),
+    s = c.width,
+    u = s / 100,
+    g = x.createLinearGradient(0, 0, s, s);
+  g.addColorStop(0, "#13876f");
+  g.addColorStop(1, "#0a4437");
+  x.fillStyle = g;
+  x.fillRect(0, 0, s, s);
+  x.fillStyle = "#f6f3e8";
+  rr(x, 24 * u, 18 * u, 52 * u, 64 * u, 6 * u);
+  x.fill();
+  x.fillStyle = "#0a4437";
+  x.fillRect(24 * u, 18 * u, 9 * u, 64 * u);
+  x.fillStyle = "#c9d8d2";
+  [32, 44, 56].forEach(function (y) {
+    x.fillRect(40 * u, y * u, 28 * u, 3.5 * u);
+  });
+  x.fillStyle = "#f2b632";
+  x.beginPath();
+  x.arc(68 * u, 70 * u, 16 * u, 0, 7);
+  x.fill();
+  x.fillStyle = "#0a4437";
+  x.font = "bold " + 24 * u + "px sans-serif";
+  x.textAlign = "center";
+  x.textBaseline = "middle";
+  x.fillText("$", 68 * u, 71 * u);
 }
 var LK = {};
 function icons() {
@@ -1977,7 +1404,7 @@ function catSheet(k, i) {
       subChips(nm) +
       '<button class="chip on" data-sa="1">＋ 添加</button></div><label>选择图标</label>' +
       icoPick("") +
-      '<button class="btn ghost" id="dl">删除这个分类</button>'
+      '<button class="btn ghost" id="dl">删除这个分类</button>',
   );
   m.addEventListener("click", function (e) {
     var b = e.target.closest("button");
@@ -2175,7 +1602,7 @@ function newCat(k, cb) {
         (k === "income" ? "新增收入分类" : "新增支出分类") +
         '</b><label>名称</label><input id="cn" maxlength="12" placeholder="例如：Mamak、宠物、孝敬父母"><label>图标</label>' +
         icoPick(e) +
-        '<button class="btn" id="ok">添加</button>'
+        '<button class="btn" id="ok">添加</button>',
     );
   m.addEventListener("click", function (ev) {
     var b = ev.target.closest("button");
@@ -2209,7 +1636,7 @@ var DBR = null,
   viewId = "",
   LC = null,
   cur = "mine",
-  JOINT = loadJoint(),
+  JOINT = null,
   JD = null,
   djt = false,
   jtm = null,
@@ -2237,9 +1664,11 @@ function ser(o) {
   });
   return JSON.stringify(c);
 }
+// 取“我的账本”（不管当前正在看哪一本）
 function getMine() {
   return cur === "mine" ? S : MINE;
 }
+// 把合并后的结果装回“我的账本”并存到本机
 function adoptMine(m) {
   if (cur === "mine") {
     var pn = S.pin;
@@ -2266,6 +1695,7 @@ function adoptMine(m) {
     } catch (e) {}
   }
 }
+// 同步（先读云端 → 合并 → 再写回）。只合并不覆盖；读不到云端就不写，等重试
 function sync(o, tries) {
   if (!DBR || !lsGet()) return;
   tries = tries || 0;
@@ -2297,6 +1727,7 @@ function sync(o, tries) {
           dirty = false;
         })
         .catch(function () {
+          // 失败不能当作已同步：退避重试，全部失败也不会丢数据（本机已保存）
           if (tries < 6) {
             sync(o, tries + 1);
           } else {
@@ -2305,9 +1736,10 @@ function sync(o, tries) {
           }
         });
     },
-    tries ? Math.min(30000, 2000 * Math.pow(2, tries - 1)) : 600
+    tries ? Math.min(30000, 2000 * Math.pow(2, tries - 1)) : 600,
   );
 }
+// 收到云端数据：合并进本机（不再整份覆盖）
 function applyRemote(d) {
   var r;
   try {
@@ -2388,9 +1820,6 @@ async function initShare() {
         JOINT = merged;
         LM.rebase("joint", JOINT);
       }
-      try {
-        localStorage.setItem(KEY_JOINT, JSON.stringify(merged));
-      } catch (e) {}
       if (!LM.same(merged, o)) syncJ();
     });
     LC.onSnapshot(function (sn) {
@@ -2431,7 +1860,7 @@ async function initShare() {
       },
       function () {
         shState = "off";
-      }
+      },
     );
     if (needPush && lsGet()) sync();
     if (tab === "set") render();
@@ -2539,9 +1968,6 @@ function syncJ(tries) {
                 JOINT = merged;
                 LM.rebase("joint", JOINT);
               }
-              try {
-                localStorage.setItem(KEY_JOINT, JSON.stringify(merged));
-              } catch (e) {}
             }
           }
           var c = JSON.parse(JSON.stringify(merged));
@@ -2560,7 +1986,7 @@ function syncJ(tries) {
           }
         });
     },
-    tries ? Math.min(30000, 2000 * Math.pow(2, tries - 1)) : 600
+    tries ? Math.min(30000, 2000 * Math.pow(2, tries - 1)) : 600,
   );
 }
 function sw(to, id) {
@@ -2570,12 +1996,7 @@ function sw(to, id) {
   if (to === "other" && !others[o]) return;
   if (to === "joint" && !JOINT && !jEmpty) return;
   if (cur === "mine") MINE = S;
-  else if (cur === "joint") {
-    JOINT = S;
-    try {
-      localStorage.setItem(KEY_JOINT, JSON.stringify(JOINT));
-    } catch (e) {}
-  }
+  else if (cur === "joint") JOINT = S;
   cur = to;
   RO = to === "other";
   viewId = o;
@@ -2589,9 +2010,6 @@ function sw(to, id) {
       fresh = true;
     }
     S = JOINT;
-    try {
-      localStorage.setItem(KEY_JOINT, JSON.stringify(JOINT));
-    } catch (e) {}
   } else S = JSON.parse(others[o]);
   if (to !== "mine") S.pin = MINE.pin;
   migrate();
@@ -2838,8 +2256,6 @@ async function scan(f) {
     txSheet(null, {
       type: ty,
       amt: String(amt),
-      origCur: r.currency || ac.cur,
-      origAmt: amt,
       acc: ac.id,
       to: "",
       cat: cat,
@@ -2866,9 +2282,7 @@ function aaCard() {
     who = "";
   S.tx.forEach(function (t) {
     if (t.aa && t.ts > st) {
-      var baseAmt =
-        S.base === "MYR" && t.myrAmt != null ? t.myrAmt : cvt(t.amt, t);
-      var v = baseAmt / 2;
+      var v = cvt(t.amt, t) / 2;
       if (t.byId === myId) net += v;
       else {
         net -= v;
@@ -2889,7 +2303,7 @@ function aaCard() {
         ? esc(nm) + " 欠你 " + fmt(net)
         : "你欠 " + esc(nm) + " " + fmt(-net)) +
     "</div>" +
-    (z ? "" : '<button class="chip on" data-act="settle">标记已结清</button>') +
+    (z ? "" : '<button class="chip on" data-act="settle">已结清</button>') +
     "</div>"
   );
 }
@@ -2952,7 +2366,9 @@ function favCard() {
 }
 async function csv() {
   try {
-    var rows = [["日期", "类型", "账户", "分类", "金额", "币种", "原币金额", "原币种", "最终MYR", "备注", "记录人"]];
+    var dl = await claude.use("downloads");
+    if (!dl) return;
+    var rows = [["日期", "类型", "账户", "分类", "金额", "币种", "备注", "记录人"]];
     S.tx
       .slice()
       .sort(function (a, b) {
@@ -2963,13 +2379,10 @@ async function csv() {
         rows.push([
           t.date,
           { expense: "支出", income: "收入", transfer: "转账" }[t.type],
-          a.name || (t.by ? t.by + "付" : ""),
+          a.name || "",
           t.cat || (t.type === "transfer" ? "→ " + ((acc(t.to) || {}).name || "") : ""),
           t.amt,
-          a.cur || t.cur || "",
-          t.origAmt != null ? t.origAmt : "",
-          t.origCur || "",
-          t.myrAmt != null ? t.myrAmt : "",
+          a.cur || "",
           t.note || "",
           t.by || "",
         ]);
@@ -2984,27 +2397,9 @@ async function csv() {
             })
             .join(",");
         })
-        .join("\r\n");
-    var fname = "ledger-" + today().replace(/-/g, "") + ".csv";
-    var dl = typeof claude !== "undefined" ? await claude.use("downloads") : null;
-    if (dl && dl.save) {
-      await dl.save({ filename: fname, data: s });
-      return;
-    }
-    var blob = new Blob([s], { type: "text/csv;charset=utf-8" });
-    var a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = fname;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(function () {
-      a.remove();
-      URL.revokeObjectURL(a.href);
-    }, 500);
-    toast("CSV 已开始下载");
-  } catch (e) {
-    toast("导出失败：" + (e.message || e));
-  }
+        .join("\n");
+    await dl.save({ filename: "ledger.csv", data: s });
+  } catch (e) {}
 }
 function hashGo() {
   if (location.hash === "#scan" && camOK && cur !== "other" && !document.getElementById("scanp"))
@@ -3012,7 +2407,7 @@ function hashGo() {
 }
 function showScan() {
   var m = openSheet(
-    '<div style="text-align:center;padding:10px 0"><div style="font-size:44px">📷</div><b>选择付款截图</b><div class="mute" style="margin:6px 0 14px">选刚刚的 TNG 截图，会自动读出金额</div><button class="btn" id="pk">选择截图</button></div>'
+    '<div style="text-align:center;padding:10px 0"><div style="font-size:44px">📷</div><b>选择付款截图</b><div class="mute" style="margin:6px 0 14px">选刚刚的 TNG 截图，会自动读出金额</div><button class="btn" id="pk">选择截图</button></div>',
   );
   m.id = "scanp";
   m.querySelector("#pk").onclick = function () {
@@ -3034,7 +2429,7 @@ function askNum(t, cb) {
   var m = openSheet(
     "<b>" +
       t +
-      '</b><input id="an" type="number" inputmode="decimal" step="0.01" style="margin-top:10px"><button class="btn" id="ok">确定</button>'
+      '</b><input id="an" type="number" inputmode="decimal" step="0.01" style="margin-top:10px"><button class="btn" id="ok">确定</button>',
   );
   m.querySelector("#an").focus();
   m.querySelector("#ok").onclick = function () {
@@ -3042,6 +2437,77 @@ function askNum(t, cb) {
     if (v > 0) {
       m.remove();
       cb(v);
+    }
+  };
+}
+function goalSheet() {
+  var m = openSheet(
+    '<b>新储蓄目标</b><label>名称</label><input id="gn" placeholder="旅行基金、买相机"><label>目标金额（' +
+      S.base +
+      '）</label><input id="gt" type="number" inputmode="decimal">' +
+      pF(0) +
+      '<button class="btn" id="ok">添加</button>',
+  );
+  m.querySelector("#ok").onclick = function () {
+    var n = m.querySelector("#gn").value.trim(),
+      t = parseFloat(m.querySelector("#gt").value),
+      q = m.querySelector("#pv");
+    if (n && t > 0) {
+      S.goals.push({ id: uid(), name: n, target: t, saved: 0, p: q && q.checked ? 1 : undefined });
+      save();
+      m.remove();
+      render();
+    }
+  };
+}
+function annSheet() {
+  var m = openSheet(
+    '<b>新纪念日</b><label>名称</label><input id="an2" placeholder="在一起、生日、第一次约会"><label>日期</label><input id="ad" type="date" value="' +
+      today() +
+      '"><label>类型</label><select id="at"><option value="y">每年纪念（倒数天数）</option><option value="s">在一起起算（已经几天）</option></select>' +
+      pF(0) +
+      '<button class="btn" id="ok">添加</button>',
+  );
+  m.querySelector("#ok").onclick = function () {
+    var n = m.querySelector("#an2").value.trim(),
+      d = m.querySelector("#ad").value,
+      q = m.querySelector("#pv");
+    if (n && d) {
+      (S.ann = S.ann || []).push({
+        id: uid(),
+        name: n,
+        date: d,
+        since: m.querySelector("#at").value === "s" ? 1 : undefined,
+        p: q && q.checked ? 1 : undefined,
+      });
+      save();
+      m.remove();
+      render();
+    }
+  };
+}
+function wishSheet() {
+  var m = openSheet(
+    '<b>想买的东西</b><label>名称</label><input id="wn" placeholder="相机、包包、机票"><label>价格（' +
+      S.base +
+      '，选填）</label><input id="wp" type="number" inputmode="decimal">' +
+      pF(0) +
+      '<button class="btn" id="ok">添加</button>',
+  );
+  m.querySelector("#ok").onclick = function () {
+    var n = m.querySelector("#wn").value.trim(),
+      p = parseFloat(m.querySelector("#wp").value) || 0,
+      q = m.querySelector("#pv");
+    if (n) {
+      (S.wish = S.wish || []).push({
+        id: uid(),
+        name: n,
+        price: p,
+        p: q && q.checked ? 1 : undefined,
+      });
+      save();
+      m.remove();
+      render();
     }
   };
 }
@@ -3326,7 +2792,7 @@ function ctxText() {
         t.type === "expense" ? "支出" : t.type === "income" ? "收入" : "转账",
         t.cat || "",
         Math.round(cvt(t.amt, t) * 100) / 100,
-        a.name || (t.by ? t.by + "付" : ""),
+        a.name || "",
         t.note || "",
         t.by || "",
       ].join("|");
@@ -3364,7 +2830,7 @@ function ctxText() {
 function askBear() {
   chat = [];
   var m = openSheet(
-      '<b>🐻 问问小熊</b><div id="ch" style="max-height:45vh;overflow:auto;margin:10px 0"></div><div class="chips" id="sg"></div><div class="row" style="margin-top:10px"><input id="q2" placeholder="问问你的账本…"><button class="btn" id="go" style="width:auto;margin:0;padding:10px 16px">发送</button></div>'
+      '<b>🐻 问问小熊</b><div id="ch" style="max-height:45vh;overflow:auto;margin:10px 0"></div><div class="chips" id="sg"></div><div class="row" style="margin-top:10px"><input id="q2" placeholder="问问你的账本…"><button class="btn" id="go" style="width:auto;margin:0;padding:10px 16px">发送</button></div>',
     ),
     ch = m.querySelector("#ch"),
     inp = m.querySelector("#q2");
@@ -3416,7 +2882,7 @@ function askBear() {
           chat.map(function (x) {
             return { role: x.role, content: x.content };
           }),
-          { cache: false }
+          { cache: false },
         );
       chat.push({ role: "assistant", content: r.text });
     } catch (e) {
@@ -3449,30 +2915,11 @@ function mirror(rec, del) {
     return x.id !== id;
   });
   if (!del && rec.pacc && (rec.type === "expense" || rec.type === "income")) {
-    var targetAcc = (MINE.accounts || []).find(function (a) {
-      return a.id === rec.pacc;
-    });
-    var accCur = targetAcc ? targetAcc.cur : rec.cur || "MYR";
-    var srcCur = rec.cur || "MYR";
-    var syncedAmt = rec.amt;
-
-    if (srcCur !== accCur) {
-      if (accCur === "MYR" && rec.myrAmt != null) {
-        syncedAmt = rec.myrAmt;
-      } else {
-        syncedAmt = Math.round(conv(rec.amt, srcCur, accCur) * 100) / 100;
-      }
-    }
-
     MINE.tx.push({
       id: id,
       ts: rec.ts,
       type: rec.type,
-      amt: syncedAmt,
-      origCur: rec.origCur,
-      origAmt: rec.origAmt,
-      myrAmt: rec.myrAmt,
-      myrManual: rec.myrManual,
+      amt: rec.amt,
       acc: rec.pacc,
       cat: rec.cat,
       note: (rec.note ? rec.note + " " : "") + "（共同）",
@@ -3542,7 +2989,7 @@ try {
 } catch (e) {}
 function pinSheet() {
   var m = openSheet(
-    '<b>设置 PIN 锁</b><div class="mute">4 到 6 位数字</div><input id="pn" type="password" inputmode="numeric" maxlength="6" style="margin-top:10px"><button class="btn" id="ok">保存</button>'
+    '<b>设置 PIN 锁</b><div class="mute">4 到 6 位数字</div><input id="pn" type="password" inputmode="numeric" maxlength="6" style="margin-top:10px"><button class="btn" id="ok">保存</button>',
   );
   m.querySelector("#ok").onclick = function () {
     var p = m.querySelector("#pn").value;
@@ -3706,7 +3153,7 @@ function goalSheet(i) {
       : function () {
           S.goals.splice(i, 1);
           save();
-        }
+        },
   );
 }
 function annSheet(i) {
@@ -3749,7 +3196,7 @@ function annSheet(i) {
       : function () {
           S.ann.splice(i, 1);
           save();
-        }
+        },
   );
 }
 function wishSheet(i) {
@@ -3783,7 +3230,7 @@ function wishSheet(i) {
       : function () {
           S.wish.splice(i, 1);
           save();
-        }
+        },
   );
 }
 function recSheet(i) {
@@ -3815,7 +3262,7 @@ function recSheet(i) {
   if (cur === "joint")
     fs.push(
       { k: "byId", l: "谁付款", t: "sel", o: ps },
-      { k: "aa", t: "chk", c: "AA 平分（另一人欠一半）" }
+      { k: "aa", t: "chk", c: "AA 平分（另一人欠一半）" },
     );
   form(
     i == null ? "新定期账单" : "编辑定期账单",
@@ -3854,7 +3301,7 @@ function recSheet(i) {
       : function () {
           S.rec.splice(i, 1);
           save();
-        }
+        },
   );
 }
 function subChips(n) {
@@ -3868,7 +3315,7 @@ function askText(t, cb) {
   var m = openSheet(
     "<b>" +
       t +
-      '</b><input id="at2" style="margin-top:10px" maxlength="12"><button class="btn" id="ok">确定</button>'
+      '</b><input id="at2" style="margin-top:10px" maxlength="12"><button class="btn" id="ok">确定</button>',
   );
   m.querySelector("#at2").focus();
   m.querySelector("#ok").onclick = function () {
@@ -3926,38 +3373,9 @@ function txSheet(edit, pre) {
     alert("请先添加一个账户");
     return;
   }
-
-  var initCur = t.origCur || (acc(t.acc) || {}).cur || t.cur || "MYR";
-  var initInputAmt = t.origAmt != null ? String(t.origAmt) : t.amt;
-  var initMyrAmt =
-    t.myrAmt != null
-      ? String(t.myrAmt)
-      : initCur !== "MYR" && parseFloat(initInputAmt) > 0
-        ? conv(parseFloat(initInputAmt), initCur, "MYR").toFixed(2)
-        : "";
-
-  var st = {
-    type: t.type,
-    cat: t.cat,
-    inCur: initCur,
-    inAmt: initInputAmt,
-    myrAmt: initMyrAmt,
-    myrManual: !!(edit && edit.myrManual),
-  };
-
+  var st = { type: t.type, cat: t.cat };
   var m = openSheet("");
   var sh = m.querySelector(".sheet");
-
-  function curLabel(c) {
-    return c === "CNY" ? "RMB" : c;
-  }
-
-  function calcMyr(val, c) {
-    var n = parseFloat(val);
-    if (!(n > 0)) return "";
-    return conv(n, c, "MYR").toFixed(2);
-  }
-
   function draw() {
     var opts = function (sel) {
       return S.accounts
@@ -3981,13 +3399,6 @@ function txSheet(edit, pre) {
     };
     var cats = S.cats[st.type === "income" ? "income" : "expense"];
     if (cats.indexOf(st.cat) < 0) st.cat = cats[0];
-
-    var curObj = acc(t.acc) || {};
-    var accCur = curObj.cur || t.pcu || "MYR";
-    var isTransfer = st.type === "transfer";
-    var activeCur = isTransfer ? accCur : st.inCur;
-    var showMyrBox = !isTransfer && activeCur !== "MYR";
-
     sh.innerHTML =
       '<button class="chip" data-close="1" style="margin-bottom:10px">‹ 返回</button><div class="seg" id="sg">' +
       [
@@ -4008,45 +3419,12 @@ function txSheet(edit, pre) {
         })
         .join("") +
       "</div>" +
-      (!isTransfer
-        ? '<div class="chips" style="justify-content:center;margin:10px 0 4px">' +
-          ["MYR", "CNY", "SGD"]
-            .map(function (c) {
-              return (
-                '<button class="chip' +
-                (st.inCur === c ? " on" : "") +
-                '" data-incur="' +
-                c +
-                '">' +
-                curLabel(c) +
-                "</button>"
-              );
-            })
-            .join("") +
-          "</div>"
-        : "") +
       '<input class="amt" id="amt" type="number" inputmode="decimal" step="0.01" placeholder="0.00" value="' +
-      esc(isTransfer ? t.amt : st.inAmt) +
+      esc(t.amt) +
       '"><div class="mute" style="text-align:center">' +
-      curLabel(activeCur) +
-      (!isTransfer && activeCur !== "MYR"
-        ? "（当前汇率：1 " + curLabel(activeCur) + " = " + S.rates[activeCur] + " MYR）"
-        : "") +
+      ((acc(t.acc) || {}).cur || "") +
       "</div>" +
-      (showMyrBox
-        ? '<div style="background:var(--bg);padding:10px 12px;border-radius:14px;margin:10px 0">' +
-          '<div class="row" style="margin-bottom:4px"><span class="mute" style="font-size:13px">最终 MYR 金额（可直接改动）</span>' +
-          (st.myrManual
-            ? '<button class="chip" id="resetMyr" style="font-size:11px;padding:2px 8px">按汇率重算</button>'
-            : "") +
-          "</div>" +
-          '<div class="row"><b style="font-size:18px;color:var(--acc)">RM</b>' +
-          '<input id="myrAmt" type="number" inputmode="decimal" step="0.01" placeholder="0.00" value="' +
-          esc(st.myrAmt) +
-          '" style="font-size:18px;font-weight:700">' +
-          "</div></div>"
-        : "") +
-      (isTransfer
+      (st.type === "transfer"
         ? '<label>转出账户</label><select id="acc">' +
           opts(t.acc) +
           '</select><label>转入账户</label><select id="to">' +
@@ -4090,7 +3468,6 @@ function txSheet(edit, pre) {
         ? '<button class="btn ghost" id="del">删除这笔</button>'
         : '<button class="btn ghost" style="color:var(--acc)" id="fv">⭐ 存为常用</button>');
   }
-
   function payF() {
     var ao = function (s) {
       return S.accounts
@@ -4165,7 +3542,6 @@ function txSheet(edit, pre) {
       "</select>"
     );
   }
-
   function imgF() {
     if (cur !== "mine") return "";
     return (
@@ -4178,7 +3554,6 @@ function txSheet(edit, pre) {
       '<input type="file" accept="image/*" id="rimg">'
     );
   }
-
   function subF() {
     var L = (S.sub || {})[st.cat] || [];
     if (st.type === "transfer" || !L.length) return "";
@@ -4198,7 +3573,6 @@ function txSheet(edit, pre) {
       "</div>"
     );
   }
-
   function toF() {
     var a = acc(t.acc),
       b = acc(t.to);
@@ -4214,41 +3588,12 @@ function txSheet(edit, pre) {
       '">'
     );
   }
-
-  function evalExpr(raw) {
-    if (raw && /^[\d\.\+\-\*\/\s\(\)]+$/.test(raw) && /[\+\-\*\/]/.test(raw)) {
-      try {
-        var calc = Function('"use strict";return (' + raw + ")")();
-        if (typeof calc === "number" && !isNaN(calc) && calc >= 0) {
-          return (Math.round(calc * 100) / 100).toFixed(2);
-        }
-      } catch (err) {}
-    }
-    return raw;
-  }
-
   function keep() {
     var g = function (i) {
       var e = sh.querySelector("#" + i);
       return e ? e.value : "";
     };
-    var rawAmt = evalExpr(g("amt"));
-    var amtInp = sh.querySelector("#amt");
-    if (amtInp && rawAmt !== g("amt")) amtInp.value = rawAmt;
-
-    if (st.type === "transfer") {
-      t.amt = rawAmt;
-    } else {
-      st.inAmt = rawAmt;
-      var myrInp = sh.querySelector("#myrAmt");
-      if (myrInp) {
-        st.myrAmt = evalExpr(myrInp.value);
-      } else if (st.inCur === "MYR") {
-        st.myrAmt = rawAmt;
-      }
-      t.amt = rawAmt;
-    }
-
+    t.amt = g("amt");
     t.acc = g("acc") || t.acc;
     t.to = g("to") || t.to;
     t.fee = g("fee");
@@ -4269,29 +3614,7 @@ function txSheet(edit, pre) {
     t.date = g("dt") || t.date;
     t.note = g("nt");
   }
-
   draw();
-  setTimeout(function () {
-    var amtEl = sh.querySelector("#amt");
-    if (amtEl && (!t.amt || t.amt === "0")) {
-      amtEl.focus();
-    }
-  }, 80);
-
-  sh.addEventListener("input", function (e) {
-    if (e.target.id === "amt" && st.type !== "transfer") {
-      st.inAmt = e.target.value;
-      if (st.inCur !== "MYR" && !st.myrManual) {
-        st.myrAmt = calcMyr(st.inAmt, st.inCur);
-        var myrEl = sh.querySelector("#myrAmt");
-        if (myrEl) myrEl.value = st.myrAmt;
-      }
-    } else if (e.target.id === "myrAmt") {
-      st.myrAmt = e.target.value;
-      st.myrManual = true;
-    }
-  });
-
   sh.addEventListener("change", function (e) {
     if (e.target.id === "rimg" && e.target.files[0]) {
       keep();
@@ -4303,32 +3626,13 @@ function txSheet(edit, pre) {
     }
     if (e.target.id === "acc" || e.target.id === "to") {
       keep();
-      if (e.target.id === "acc" && st.type !== "transfer" && !st.myrManual) {
-        var newAcc = acc(t.acc);
-        if (newAcc && newAcc.cur) {
-          st.inCur = newAcc.cur;
-          st.myrAmt = st.inCur !== "MYR" ? calcMyr(st.inAmt, st.inCur) : "";
-        }
-      }
       draw();
     }
   });
-
   sh.addEventListener("click", function (e) {
     var b = e.target.closest("button");
     if (!b) return;
-    if (b.dataset.incur) {
-      keep();
-      st.inCur = b.dataset.incur;
-      st.myrManual = false;
-      st.myrAmt = st.inCur !== "MYR" ? calcMyr(st.inAmt, st.inCur) : "";
-      draw();
-    } else if (b.id === "resetMyr") {
-      keep();
-      st.myrManual = false;
-      st.myrAmt = calcMyr(st.inAmt, st.inCur);
-      draw();
-    } else if (b.dataset.py) {
+    if (b.dataset.py) {
       keep();
       t.pay = b.dataset.py;
       if (t.pay !== "joint" && t.aa === undefined) t.aa = true;
@@ -4369,7 +3673,7 @@ function txSheet(edit, pre) {
       }
     } else if (b.id === "fv") {
       keep();
-      var fa2 = parseFloat(st.inAmt);
+      var fa2 = parseFloat(t.amt);
       if (st.type !== "transfer" && fa2 > 0) {
         (S.fav = S.fav || []).push({
           name: t.note || st.cat,
@@ -4384,8 +3688,8 @@ function txSheet(edit, pre) {
       } else b.textContent = "请先填金额（转账不能存）";
     } else if (b.id === "ok") {
       keep();
-      var rawInputNum = parseFloat(st.type === "transfer" ? t.amt : st.inAmt);
-      if (!(rawInputNum > 0)) {
+      var amt = parseFloat(t.amt);
+      if (!(amt > 0)) {
         alert("请输入大于 0 的金额");
         return;
       }
@@ -4393,56 +3697,17 @@ function txSheet(edit, pre) {
         alert("转出和转入账户不能相同");
         return;
       }
-
-      var finalAmt = rawInputNum;
-      var origCur = undefined;
-      var origAmt = undefined;
-      var myrAmt = undefined;
-      var myrManual = undefined;
-
-      if (st.type !== "transfer") {
-        var targetAcc = acc(t.acc);
-        var targetCur = targetAcc ? targetAcc.cur : t.pcu || S.base;
-        if (st.inCur !== "MYR") {
-          var parsedMyr = parseFloat(st.myrAmt);
-          var finalMyr =
-            parsedMyr > 0
-              ? Math.round(parsedMyr * 100) / 100
-              : Math.round(conv(rawInputNum, st.inCur, "MYR") * 100) / 100;
-          origCur = st.inCur;
-          origAmt = rawInputNum;
-          myrAmt = finalMyr;
-          if (st.myrManual) myrManual = 1;
-
-          if (targetCur === "MYR") {
-            finalAmt = finalMyr;
-          } else if (targetCur === st.inCur) {
-            finalAmt = rawInputNum;
-          } else {
-            finalAmt = Math.round(conv(finalMyr, "MYR", targetCur) * 100) / 100;
-          }
-        } else {
-          if (targetCur !== "MYR") {
-            origCur = "MYR";
-            origAmt = rawInputNum;
-            myrAmt = rawInputNum;
-            finalAmt = Math.round(conv(rawInputNum, "MYR", targetCur) * 100) / 100;
-          }
-        }
-      }
-
       if (
         !edit &&
         !b.dataset.dup &&
         S.tx.some(function (x) {
-          return x.date === t.date && x.amt === finalAmt && x.acc === t.acc && x.type === st.type;
+          return x.date === t.date && x.amt === amt && x.acc === t.acc && x.type === st.type;
         })
       ) {
         b.dataset.dup = 1;
         b.textContent = "已有相同金额的记录，再点一次确认保存";
         return;
       }
-
       var rec = {
         id: edit ? edit.id : uid(),
         ts: edit ? edit.ts : Date.now(),
@@ -4458,11 +3723,7 @@ function txSheet(edit, pre) {
             ? t.sub
             : undefined,
         type: st.type,
-        amt: finalAmt,
-        origCur: origCur,
-        origAmt: origAmt,
-        myrAmt: myrAmt,
-        myrManual: myrManual,
+        amt: amt,
         acc: t.acc,
         date: t.date,
         note: t.note,
@@ -4472,7 +3733,6 @@ function txSheet(edit, pre) {
         rec.pay = py;
         if (py === "joint") {
           rec.aa = undefined;
-          rec.cur = (acc(t.acc) || {}).cur || S.base;
         } else {
           var ob = Object.keys(others)[0],
             pa2 = (MINE.accounts || []).find(function (a) {
@@ -4484,20 +3744,6 @@ function txSheet(edit, pre) {
           rec.aa = st.type === "expense" && t.aa ? 1 : undefined;
           rec.pacc = py === "me" && pa2 ? pa2.id : undefined;
           rec.cur = py === "me" && pa2 ? pa2.cur : t.pcu || S.base;
-
-          if (st.inCur !== "MYR") {
-            rec.amt =
-              rec.cur === "MYR"
-                ? myrAmt
-                : rec.cur === st.inCur
-                  ? rawInputNum
-                  : Math.round(conv(myrAmt, "MYR", rec.cur) * 100) / 100;
-          } else {
-            rec.amt =
-              rec.cur === "MYR"
-                ? rawInputNum
-                : Math.round(conv(rawInputNum, "MYR", rec.cur) * 100) / 100;
-          }
         }
       }
       if (st.type === "transfer") {
@@ -4505,8 +3751,7 @@ function txSheet(edit, pre) {
         rec.fee = parseFloat(t.fee) || 0;
         var fa = acc(t.acc),
           fb = acc(t.to);
-        rec.toAmt =
-          parseFloat(t.toAmt) || (fa && fb ? +conv(finalAmt, fa.cur, fb.cur).toFixed(2) : finalAmt);
+        rec.toAmt = parseFloat(t.toAmt) || (fa && fb ? +conv(amt, fa.cur, fb.cur).toFixed(2) : amt);
       } else rec.cat = st.cat;
       if (edit)
         S.tx = S.tx.map(function (x) {
@@ -4521,9 +3766,81 @@ function txSheet(edit, pre) {
   });
 }
 
+function accSheet(id) {
+  var a = id === "new" ? { name: "", type: "bank", bal: 0 } : acc(id);
+  var m = openSheet(
+    "<b>" +
+      (id === "new" ? "新账户" : "编辑账户") +
+      '</b><label>名称</label><input id="n" value="' +
+      esc(a.name) +
+      '" placeholder="例如：招商银行、支付宝"><label>类型</label><div class="chips">' +
+      Object.keys(TYPES)
+        .map(function (k) {
+          return (
+            '<button class="chip' +
+            (k === a.type ? " on" : "") +
+            '" data-k="' +
+            k +
+            '">' +
+            TYPES[k][1] +
+            " " +
+            TYPES[k][0] +
+            "</button>"
+          );
+        })
+        .join("") +
+      '</div><label>初始余额（信用卡欠款填负数）</label><input id="b" type="number" inputmode="decimal" step="0.01" value="' +
+      (+a.bal || 0) +
+      '"><button class="btn" id="ok">保存</button>' +
+      (id !== "new" ? '<button class="btn ghost" id="del">删除账户</button>' : ""),
+  );
+  var type = a.type;
+  m.addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (!b) return;
+    if (b.dataset.k) {
+      type = b.dataset.k;
+      m.querySelectorAll("[data-k]").forEach(function (x) {
+        x.classList.toggle("on", x === b);
+      });
+    } else if (b.id === "ok") {
+      var n = m.querySelector("#n").value.trim();
+      if (!n) {
+        alert("请填写账户名称");
+        return;
+      }
+      var bal = parseFloat(m.querySelector("#b").value) || 0;
+      if (id === "new") S.accounts.push({ id: uid(), name: n, type: type, bal: bal });
+      else {
+        a.name = n;
+        a.type = type;
+        a.bal = bal;
+      }
+      save();
+      m.remove();
+      render();
+    } else if (b.id === "del") {
+      var used = S.tx.some(function (t) {
+        return t.acc === id || t.to === id;
+      });
+      if (two(b, used ? "再点一次：账户和它的所有记录都会删除" : "再点一次确认删除")) {
+        S.accounts = S.accounts.filter(function (x) {
+          return x.id !== id;
+        });
+        S.tx = S.tx.filter(function (t) {
+          return t.acc !== id && t.to !== id;
+        });
+        save();
+        m.remove();
+        render();
+      }
+    }
+  });
+}
+
 document.addEventListener("click", function (e) {
   var el = e.target.closest(
-    "[data-tab],[data-go],[data-tx],[data-acc],[data-d],[data-m],[data-w],[data-y],[data-stat],[data-base],[data-addcat],[data-delcat],[data-bk],[data-act]"
+    "[data-tab],[data-go],[data-tx],[data-acc],[data-m],[data-base],[data-addcat],[data-delcat],[data-bk],[data-act]",
   );
   if (e.target.id === "cam") {
     document.getElementById("shot").click();
@@ -4539,11 +3856,7 @@ document.addEventListener("click", function (e) {
     !(
       el.dataset.tab ||
       el.dataset.go ||
-      el.dataset.d ||
       el.dataset.m ||
-      el.dataset.w ||
-      el.dataset.y ||
-      el.dataset.stat ||
       el.dataset.act === "back" ||
       el.dataset.act === "sw"
     )
@@ -4563,7 +3876,7 @@ document.addEventListener("click", function (e) {
     });
     if (t) txSheet(JSON.parse(JSON.stringify(t)));
   } else if (el.dataset.acc) {
-    accSheet(el.dataset.acc);
+    accSheet2(el.dataset.acc);
   } else if (el.dataset.base) {
     S.base = el.dataset.base;
     save();
@@ -4573,26 +3886,16 @@ document.addEventListener("click", function (e) {
   } else if (el.dataset.delcat) {
     var q = el.dataset.delcat.split(":");
     catSheet(q[0], +q[1]);
+    return;
+    if (confirm("删除分类“" + S.cats[q[0]][q[1]] + "”？旧记录会保留。")) {
+      S.cats[q[0]].splice(+q[1], 1);
+      save();
+      render();
+    }
   } else if (el.dataset.bk) {
     backup(el.dataset.bk);
   } else if (el.dataset.act) {
     act(el.dataset.act, el.dataset.i);
-  } else if (el.dataset.stat) {
-    statMode = el.dataset.stat;
-    render();
-  } else if (el.dataset.d) {
-    statDay = el.dataset.d === "today" ? today() : shiftDate(statDay, +el.dataset.d);
-    render();
-  } else if (el.dataset.w) {
-    if (el.dataset.w === "today") {
-      statWeek = new Date();
-    } else {
-      statWeek.setDate(statWeek.getDate() + 7 * +el.dataset.w);
-    }
-    render();
-  } else if (el.dataset.y) {
-    statYear += +el.dataset.y;
-    render();
   } else if (el.dataset.m) {
     mon = new Date(mon.getFullYear(), mon.getMonth() + +el.dataset.m, 1);
     render();
@@ -4640,15 +3943,4 @@ lock();
 initShare();
 window.addEventListener("hashchange", hashGo);
 hashGo();
-window.addEventListener("online", function () {
-  sync();
-  syncJ();
-});
-document.addEventListener("visibilitychange", function () {
-  if (!document.hidden) {
-    sync();
-    syncJ();
-  }
-});
-if ("serviceWorker" in navigator)
-  navigator.serviceWorker.register("sw.js").catch(function () {});
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(function () {});
