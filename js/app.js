@@ -229,16 +229,17 @@ function monthTx(m, a) {
 }
 function cvt(x, t) {
   var a = acc(t.acc);
+  var srcCur = a ? a.cur : t.cur || "MYR";
   if (
     t &&
     t.myrAmt != null &&
     x === t.amt &&
     S.base === "MYR" &&
-    (!a || a.cur === "MYR")
+    srcCur === "MYR"
   ) {
     return t.myrAmt;
   }
-  return conv(x, a ? a.cur : t.cur || "MYR", S.base);
+  return conv(x, srcCur, S.base);
 }
 function sums(list) {
   var i = 0,
@@ -584,6 +585,7 @@ function statsWeek() {
       } else if (t.type === "transfer" && t.fee) {
         dayStats[t.date].e += v;
         dayStats[t.date].count++;
+        byCat["其他"] = (byCat["其他"] || 0) + v;
       }
     }
   });
@@ -687,7 +689,7 @@ function statsWeek() {
     '<b class="sp">📋 每一天总共开销</b>' +
     '<span class="mute" style="font-size:12px">共 ' +
     wList.filter(function (t) {
-      return t.type === "expense";
+      return t.type === "expense" || (t.type === "transfer" && t.fee > 0);
     }).length +
     " 笔</span>" +
     "</div>";
@@ -754,13 +756,14 @@ function statsWeek() {
 function statsMonth() {
   var m = mk(mon),
     list = monthTx(m).filter(function (t) {
-      return t.type === "expense";
+      return t.type === "expense" || (t.type === "transfer" && t.fee > 0);
     }),
     by = {},
     tot = 0;
   list.forEach(function (t) {
-    var v = cvt(t.amt, t);
-    by[t.cat] = (by[t.cat] || 0) + v;
+    var v = cvt(t.type === "transfer" ? t.fee : t.amt, t);
+    var catName = t.type === "transfer" ? "其他" : t.cat;
+    by[catName] = (by[catName] || 0) + v;
     tot += v;
   });
   Object.keys(S.budget).forEach(function (k) {
@@ -1409,9 +1412,16 @@ function act(a, i) {
     save();
     render();
   } else if (a === "settle") {
+    var btn = document.querySelector('[data-act="settle"]');
+    if (btn && !btn.dataset.s) {
+      btn.dataset.s = "1";
+      btn.textContent = "再点一次确认已结清";
+      return;
+    }
     S.settled = Date.now();
     save();
     render();
+    toast("AA 账单已标记结清");
   } else if (a === "setup") {
     setupSync();
   } else if (a === "ask") {
@@ -2587,7 +2597,9 @@ function aaCard() {
     who = "";
   S.tx.forEach(function (t) {
     if (t.aa && t.ts > st) {
-      var v = cvt(t.amt, t) / 2;
+      var baseAmt =
+        S.base === "MYR" && t.myrAmt != null ? t.myrAmt : cvt(t.amt, t);
+      var v = baseAmt / 2;
       if (t.byId === myId) net += v;
       else {
         net -= v;
@@ -2608,7 +2620,7 @@ function aaCard() {
         ? esc(nm) + " 欠你 " + fmt(net)
         : "你欠 " + esc(nm) + " " + fmt(-net)) +
     "</div>" +
-    (z ? "" : '<button class="chip on" data-act="settle">已结清</button>') +
+    (z ? "" : '<button class="chip on" data-act="settle">标记已结清</button>') +
     "</div>"
   );
 }
@@ -2682,10 +2694,10 @@ async function csv() {
         rows.push([
           t.date,
           { expense: "支出", income: "收入", transfer: "转账" }[t.type],
-          a.name || "",
+          a.name || (t.by ? t.by + "付" : ""),
           t.cat || (t.type === "transfer" ? "→ " + ((acc(t.to) || {}).name || "") : ""),
           t.amt,
-          a.cur || "",
+          a.cur || t.cur || "",
           t.origAmt != null ? t.origAmt : "",
           t.origCur || "",
           t.myrAmt != null ? t.myrAmt : "",
@@ -3045,7 +3057,7 @@ function ctxText() {
         t.type === "expense" ? "支出" : t.type === "income" ? "收入" : "转账",
         t.cat || "",
         Math.round(cvt(t.amt, t) * 100) / 100,
-        a.name || "",
+        a.name || (t.by ? t.by + "付" : ""),
         t.note || "",
         t.by || "",
       ].join("|");
@@ -3168,11 +3180,26 @@ function mirror(rec, del) {
     return x.id !== id;
   });
   if (!del && rec.pacc && (rec.type === "expense" || rec.type === "income")) {
+    var targetAcc = (MINE.accounts || []).find(function (a) {
+      return a.id === rec.pacc;
+    });
+    var accCur = targetAcc ? targetAcc.cur : rec.cur || "MYR";
+    var srcCur = rec.cur || "MYR";
+    var syncedAmt = rec.amt;
+
+    if (srcCur !== accCur) {
+      if (accCur === "MYR" && rec.myrAmt != null) {
+        syncedAmt = rec.myrAmt;
+      } else {
+        syncedAmt = Math.round(conv(rec.amt, srcCur, accCur) * 100) / 100;
+      }
+    }
+
     MINE.tx.push({
       id: id,
       ts: rec.ts,
       type: rec.type,
-      amt: rec.amt,
+      amt: syncedAmt,
       origCur: rec.origCur,
       origAmt: rec.origAmt,
       myrAmt: rec.myrAmt,
@@ -3631,7 +3658,7 @@ function txSheet(edit, pre) {
     return;
   }
 
-  var initCur = t.origCur || (acc(t.acc) || {}).cur || "MYR";
+  var initCur = t.origCur || (acc(t.acc) || {}).cur || t.cur || "MYR";
   var initInputAmt = t.origAmt != null ? String(t.origAmt) : t.amt;
   var initMyrAmt =
     t.myrAmt != null
@@ -4180,6 +4207,7 @@ function txSheet(edit, pre) {
         rec.pay = py;
         if (py === "joint") {
           rec.aa = undefined;
+          rec.cur = (acc(t.acc) || {}).cur || S.base;
         } else {
           var ob = Object.keys(others)[0],
             pa2 = (MINE.accounts || []).find(function (a) {
@@ -4191,8 +4219,19 @@ function txSheet(edit, pre) {
           rec.aa = st.type === "expense" && t.aa ? 1 : undefined;
           rec.pacc = py === "me" && pa2 ? pa2.id : undefined;
           rec.cur = py === "me" && pa2 ? pa2.cur : t.pcu || S.base;
-          if (rec.cur === "MYR" && myrAmt != null) {
-            rec.amt = myrAmt;
+
+          if (st.inCur !== "MYR") {
+            rec.amt =
+              rec.cur === "MYR"
+                ? myrAmt
+                : rec.cur === st.inCur
+                  ? rawInputNum
+                  : Math.round(conv(myrAmt, "MYR", rec.cur) * 100) / 100;
+          } else {
+            rec.amt =
+              rec.cur === "MYR"
+                ? rawInputNum
+                : Math.round(conv(rawInputNum, "MYR", rec.cur) * 100) / 100;
           }
         }
       }
