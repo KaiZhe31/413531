@@ -457,34 +457,155 @@ function accts() {
   );
 }
 
+function ds(d) {
+  return (
+    d.getFullYear() +
+    "-" +
+    String(d.getMonth() + 1).padStart(2, "0") +
+    "-" +
+    String(d.getDate()).padStart(2, "0")
+  );
+}
+function pd(s) {
+  var p = s.split("-");
+  return new Date(+p[0], +p[1] - 1, +p[2] || 1);
+}
+function weekStart(d) {
+  var x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); // 周一为一周开始
+  return x;
+}
+var WD = ["日", "一", "二", "三", "四", "五", "六"];
+function statRange() {
+  var a, b, label, d, s, e;
+  if (statMode === "day") {
+    d = pd(statDay);
+    a = b = ds(d);
+    label = d.getFullYear() + "年" + (d.getMonth() + 1) + "月" + d.getDate() + "日";
+    if (a === today()) label += "（今天）";
+  } else if (statMode === "week") {
+    s = weekStart(statWeek);
+    e = new Date(s.getFullYear(), s.getMonth(), s.getDate() + 6);
+    a = ds(s);
+    b = ds(e);
+    label =
+      s.getFullYear() +
+      "年 " +
+      (s.getMonth() + 1) +
+      "月" +
+      s.getDate() +
+      "日 – " +
+      (e.getMonth() + 1) +
+      "月" +
+      e.getDate() +
+      "日";
+    if (a <= today() && today() <= b) label += "（本周）";
+  } else if (statMode === "month") {
+    s = new Date(mon.getFullYear(), mon.getMonth(), 1);
+    e = new Date(mon.getFullYear(), mon.getMonth() + 1, 0);
+    a = ds(s);
+    b = ds(e);
+    label = mon.getFullYear() + "年" + (mon.getMonth() + 1) + "月";
+  } else {
+    a = statYear + "-01-01";
+    b = statYear + "-12-31";
+    label = statYear + "年";
+  }
+  return { a: a, b: b, label: label };
+}
+function statNav(n) {
+  if (statMode === "day") {
+    var d = pd(statDay);
+    statDay = ds(new Date(d.getFullYear(), d.getMonth(), d.getDate() + n));
+  } else if (statMode === "week") {
+    var w = weekStart(statWeek);
+    statWeek = new Date(w.getFullYear(), w.getMonth(), w.getDate() + 7 * n);
+  } else if (statMode === "month") {
+    mon = new Date(mon.getFullYear(), mon.getMonth() + n, 1);
+  } else {
+    statYear += n;
+  }
+}
+
 function stats() {
-  var m = mk(mon),
-    list = monthTx(m).filter(function (t) {
-      return t.type === "expense";
+  var r = statRange(),
+    list = S.tx.filter(function (t) {
+      var d = String(t.date || "").slice(0, 10);
+      return d >= r.a && d <= r.b;
     }),
     by = {},
-    tot = 0;
+    tot = 0,
+    inc = 0,
+    sub = {};
   list.forEach(function (t) {
-    var v = cvt(t.amt, t);
-    by[t.cat] = (by[t.cat] || 0) + v;
-    tot += v;
+    var d = String(t.date).slice(0, 10);
+    if (t.type === "income") inc += cvt(t.amt, t);
+    else if (t.type === "expense") {
+      var v = cvt(t.amt, t),
+        k = statMode === "year" ? d.slice(0, 7) : d;
+      by[t.cat] = (by[t.cat] || 0) + v;
+      tot += v;
+      sub[k] = (sub[k] || 0) + v;
+    }
   });
-  Object.keys(S.budget).forEach(function (k) {
-    if (!(k in by) && S.budget[k] > 0) by[k] = 0;
-  });
+  if (statMode === "month")
+    Object.keys(S.budget).forEach(function (k) {
+      if (!(k in by) && S.budget[k] > 0) by[k] = 0;
+    });
   var keys = Object.keys(by).sort(function (a, b) {
     return by[b] - by[a];
   });
+  var modes = [
+    ["day", "日"],
+    ["week", "周"],
+    ["month", "月"],
+    ["year", "年"],
+  ];
   var h =
-    '<div class="mnav"><button data-m="-1" aria-label="上个月">‹</button><b>' +
-    mon.getFullYear() +
-    "年" +
-    (mon.getMonth() + 1) +
-    '月支出</b><button data-m="1" aria-label="下个月">›</button></div><div class="card">';
+    '<div class="seg" style="margin-bottom:8px">' +
+    modes
+      .map(function (m) {
+        return (
+          '<button data-sm="' +
+          m[0] +
+          '" class="' +
+          (statMode === m[0] ? "on" : "") +
+          '">' +
+          m[1] +
+          "</button>"
+        );
+      })
+      .join("") +
+    '</div><div class="mnav"><button data-sn="-1" aria-label="上一个">‹</button><b>' +
+    r.label +
+    '</b><button data-sn="1" aria-label="下一个">›</button></div>';
+
+  // 总开销
+  var st = pd(r.a),
+    en = pd(r.b),
+    t0 = pd(today()),
+    avg = "";
+  if (statMode !== "day" && t0 >= st) {
+    if (t0 < en) en = t0;
+    var days = Math.round((en - st) / 864e5) + 1;
+    avg = " · 日均 " + fmt(tot / days);
+  }
+  h +=
+    '<div class="card"><h1>总开销</h1><div class="big exp" style="color:var(--exp)">' +
+    fmt(tot) +
+    '</div><div class="mute">收入 ' +
+    fmt(inc) +
+    " · 结余 " +
+    fmt(inc - tot) +
+    avg +
+    "</div></div>";
+
+  // 分类明细
+  h += '<div class="card"><b>分类支出</b>';
   h += keys.length
     ? keys
         .map(function (k) {
-          var bd = S.budget[k] || 0,
+          var bd = statMode === "month" ? S.budget[k] || 0 : 0,
             p = bd ? Math.min((by[k] / bd) * 100, 100) : tot ? (by[k] / tot) * 100 : 0,
             ov = bd && by[k] > bd;
           return (
@@ -511,30 +632,94 @@ function stats() {
           );
         })
         .join("")
-    : '<div class="empty">本月还没有支出</div>';
-  h += '</div><div class="card"><b>近 6 个月</b><div class="mo">';
-  var arr = [],
-    mx = 1;
-  for (var i = 5; i >= 0; i--) {
-    var d = new Date(mon.getFullYear(), mon.getMonth() - i, 1),
-      s = sums(monthTx(mk(d)));
-    arr.push([d.getMonth() + 1, s]);
-    mx = Math.max(mx, s.i, s.e);
+    : '<div class="empty">这段时间还没有支出</div>';
+  h += "</div>";
+
+  // 每天 / 每月 明细
+  if (statMode === "day") {
+    var dl = list.slice().sort(function (a, b) {
+      return (b.ts || 0) - (a.ts || 0);
+    });
+    if (dl.length)
+      h +=
+        '<div class="card" style="padding:0 14px">' + dl.map(txRow).join("") + "</div>";
+  } else {
+    var rows = [],
+      mx = 1,
+      title = statMode === "year" ? "每月支出" : "每日支出";
+    if (statMode === "year") {
+      for (var m = 1; m <= 12; m++) {
+        var k2 = statYear + "-" + String(m).padStart(2, "0");
+        rows.push([k2, m + "月", sub[k2] || 0]);
+      }
+    } else {
+      var c = pd(r.a),
+        e2 = pd(r.b);
+      for (; c <= e2; c = new Date(c.getFullYear(), c.getMonth(), c.getDate() + 1)) {
+        var k3 = ds(c);
+        if (statMode === "month" && !sub[k3]) continue;
+        rows.push([
+          k3,
+          (c.getMonth() + 1) + "月" + c.getDate() + "日 周" + WD[c.getDay()],
+          sub[k3] || 0,
+        ]);
+      }
+    }
+    rows.forEach(function (x) {
+      mx = Math.max(mx, x[2]);
+    });
+    if (rows.length)
+      h +=
+        '<div class="card"><b>' +
+        title +
+        "</b>" +
+        rows
+          .map(function (x) {
+            return (
+              '<div class="item" data-sd="' +
+              x[0] +
+              '" style="cursor:pointer"><div class="row"><span class="sp">' +
+              x[1] +
+              '</span><span class="num' +
+              (x[2] ? "" : " mute") +
+              '">' +
+              fmt(x[2]) +
+              '</span></div><div class="bar"><i style="width:' +
+              (x[2] / mx) * 100 +
+              '%"></i></div></div>'
+            );
+          })
+          .join("") +
+        '<div class="mute" style="margin-top:6px">点一行可查看那' +
+        (statMode === "year" ? "个月" : "一天") +
+        "的详情</div></div>";
   }
-  arr.forEach(function (a) {
+
+  // 近 6 个月（仅月视图）
+  if (statMode === "month") {
+    h += '<div class="card"><b>近 6 个月</b><div class="mo">';
+    var arr = [],
+      mx2 = 1;
+    for (var i = 5; i >= 0; i--) {
+      var d = new Date(mon.getFullYear(), mon.getMonth() - i, 1),
+        s = sums(monthTx(mk(d)));
+      arr.push([d.getMonth() + 1, s]);
+      mx2 = Math.max(mx2, s.i, s.e);
+    }
+    arr.forEach(function (a) {
+      h +=
+        '<div><div style="display:flex;align-items:flex-end;gap:2px;flex:1;width:100%;justify-content:center"><span style="height:' +
+        (a[1].i / mx2) * 100 +
+        '%;background:#4fbf8b"></span><span style="height:' +
+        (a[1].e / mx2) * 100 +
+        '%;background:var(--exp)"></span></div>' +
+        a[0] +
+        "月</div>";
+    });
     h +=
-      '<div><div style="display:flex;align-items:flex-end;gap:2px;flex:1;width:100%;justify-content:center"><span style="height:' +
-      (a[1].i / mx) * 100 +
-      '%;background:#4fbf8b"></span><span style="height:' +
-      (a[1].e / mx) * 100 +
-      '%;background:var(--exp)"></span></div>' +
-      a[0] +
-      "月</div>";
-  });
-  return (
-    h +
-    '</div><div class="mute" style="margin-top:6px"><span class="inc">■</span> 收入　<span class="exp">■</span> 支出</div></div>'
-  );
+      '</div><div class="mute" style="margin-top:6px"><span class="inc">■</span> 收入　<span class="exp">■</span> 支出</div></div>';
+  }
+  return h;
 }
 
 function settings() {
@@ -3840,7 +4025,7 @@ function accSheet(id) {
 
 document.addEventListener("click", function (e) {
   var el = e.target.closest(
-    "[data-tab],[data-go],[data-tx],[data-acc],[data-m],[data-base],[data-addcat],[data-delcat],[data-bk],[data-act]",
+    "[data-tab],[data-go],[data-tx],[data-acc],[data-m],[data-sm],[data-sn],[data-sd],[data-base],[data-addcat],[data-delcat],[data-bk],[data-act]",
   );
   if (e.target.id === "cam") {
     document.getElementById("shot").click();
@@ -3857,6 +4042,9 @@ document.addEventListener("click", function (e) {
       el.dataset.tab ||
       el.dataset.go ||
       el.dataset.m ||
+      el.dataset.sm ||
+      el.dataset.sn ||
+      el.dataset.sd ||
       el.dataset.act === "back" ||
       el.dataset.act === "sw"
     )
@@ -3865,6 +4053,22 @@ document.addEventListener("click", function (e) {
   if (el.dataset.tab) {
     backTo = "";
     tab = el.dataset.tab;
+    render();
+  } else if (el.dataset.sm) {
+    statMode = el.dataset.sm;
+    render();
+  } else if (el.dataset.sn) {
+    statNav(+el.dataset.sn);
+    render();
+  } else if (el.dataset.sd) {
+    var sd = el.dataset.sd;
+    if (sd.length === 10) {
+      statMode = "day";
+      statDay = sd;
+    } else {
+      statMode = "month";
+      mon = new Date(+sd.slice(0, 4), +sd.slice(5, 7) - 1, 1);
+    }
     render();
   } else if (el.dataset.go) {
     backTo = tab;
