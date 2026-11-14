@@ -29,6 +29,7 @@ var EXPC = [
   "过路费",
   "购物",
   "水电网络",
+  "话费充值",
   "房租",
   "娱乐",
   "医疗",
@@ -128,6 +129,23 @@ function migrate() {
   S.accounts.forEach(function (a) {
     a.cur = a.cur || "MYR";
   });
+  // 一次性补上「话费充值」分类（用现金 / TNG 等给 U Mobile 之类充值），删掉后不会再自动加回来
+  S.mig = S.mig || {};
+  if (!S.mig.topup) {
+    S.mig.topup = 1;
+    var ex = S.cats.expense;
+    if (ex.indexOf("话费充值") < 0) {
+      var oi = ex.indexOf("其他");
+      if (oi >= 0) ex.splice(oi, 0, "话费充值");
+      else ex.push("话费充值");
+    }
+    if (!S.ci["话费充值"]) S.ci["话费充值"] = "📶";
+    if (!S.sub["话费充值"])
+      S.sub["话费充值"] = [
+        "U Mobile", "Hotlink", "CelcomDigi", "Unifi Mobile", "Yoodo", "Tune Talk",
+        "redONE", "XOX", "Buzzme", "Speakout", "Singtel", "其他",
+      ];
+  }
 }
 function fxText(cur, am, mv) {
   var r = S.rates[cur] || 0;
@@ -162,7 +180,7 @@ function rateRows(list) {
     .join("");
 }
 function conv(n, f, t) {
-  return (n * S.rates[f]) / S.rates[t];
+  return (n * (S.rates[f] || 1)) / (S.rates[t] || 1);
 }
 function accRow(a, at) {
   var b = balance(a),
@@ -194,7 +212,8 @@ var tab = "home",
   statWeek = new Date(),
   statYear = new Date().getFullYear(),
   fAcc = "all",
-  fQ = "";
+  fQ = "",
+  fF = "all";
 function load() {
   try {
     var r = localStorage.getItem(KEY);
@@ -234,6 +253,7 @@ function uid() {
   }
 }
 function fmt(n, c) {
+  if (!isFinite(n)) n = 0;
   var s = Math.abs(n).toLocaleString("zh-CN", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -412,6 +432,97 @@ function txRow(t) {
   );
 }
 
+function periodCard() {
+  var td = new Date(),
+    ws = weekStart(td),
+    we = new Date(ws.getFullYear(), ws.getMonth(), ws.getDate() + 6),
+    y = td.getFullYear(),
+    mm = mk(td),
+    ps = [
+      ["day", "今天", expIn(today(), today())],
+      ["week", "本周", expIn(ds(ws), ds(we))],
+      ["month", "本月", expIn(mm + "-01", mm + "-31")],
+      ["year", "今年", expIn(y + "-01-01", y + "-12-31")],
+    ];
+  return (
+    '<div class="card"><div class="mute" style="margin-bottom:6px">支出一览 · 点一下看详情</div><div class="row" style="gap:4px;align-items:flex-start">' +
+    ps
+      .map(function (p) {
+        return (
+          '<div class="sp" data-hm="' + p[0] + '" style="cursor:pointer;text-align:center"><div class="mute">' + p[1] +
+          '</div><div class="num exp" style="font-size:13px">' + fmt(p[2]) + "</div></div>"
+        );
+      })
+      .join("") +
+    "</div></div>"
+  );
+}
+function expIn(a, b) {
+  var v = 0;
+  S.tx.forEach(function (t) {
+    var d = String(t.date || "").slice(0, 10);
+    if (t.type === "expense" && d >= a && d <= b) v += cvt(t.amt, t);
+  });
+  return v;
+}
+var PAL = ["#e8506b", "#9b5de5", "#f15bb5", "#00bbf9", "#00c48c", "#fcb900", "#ff8a5c", "#6c757d", "#7a6bd6", "#2f9e6e"];
+function billF(t) {
+  if (fF === "all") return true;
+  return fF.indexOf("t:") === 0 ? t.type === fF.slice(2) : t.cat === fF.slice(2);
+}
+function fOpts() {
+  function o(v, l) {
+    return '<option value="' + esc(v) + '"' + (fF === v ? " selected" : "") + ">" + esc(l) + "</option>";
+  }
+  return (
+    o("all", "全部类型和分类") + o("t:expense", "仅支出") + o("t:income", "仅收入") + o("t:transfer", "仅转账") +
+    '<optgroup label="支出分类">' + S.cats.expense.map(function (c) { return o("c:" + c, c); }).join("") +
+    '</optgroup><optgroup label="收入分类">' + S.cats.income.map(function (c) { return o("c:" + c, c); }).join("") + "</optgroup>"
+  );
+}
+function csvSheet() {
+  var m = openSheet(
+    '<b>导出 CSV</b><label>开始日期</label><input id="c1" type="date" value="' + new Date().getFullYear() +
+      '-01-01"><label>结束日期</label><input id="c2" type="date" value="' + today() +
+      '"><div class="mute" style="margin-top:8px">会多一列「折合 ' + S.base + '」，外币记录对账更方便</div><button class="btn" id="go">导出</button>',
+  );
+  m.querySelector("#go").onclick = function () {
+    csv(m.querySelector("#c1").value, m.querySelector("#c2").value);
+    m.remove();
+  };
+}
+async function fxUpdate() {
+  toast("正在更新汇率…");
+  try {
+    var j = await (await fetch("https://open.er-api.com/v6/latest/MYR")).json(),
+      n = 0;
+    if (!j || !j.rates) throw 0;
+    CURS.forEach(function (c) {
+      var v = j.rates[c];
+      if (c !== "MYR" && v > 0) {
+        S.rates[c] = +(1 / v).toPrecision(5);
+        n++;
+      }
+    });
+    save();
+    render();
+    toast("已更新 " + n + " 个币种的汇率");
+  } catch (e) {
+    toast("更新失败，请检查网络，或手动填写汇率");
+  }
+}
+function prevRange(r) {
+  var s = pd(r.a);
+  if (statMode === "day") {
+    var e = ds(new Date(s.getFullYear(), s.getMonth(), s.getDate() - 1));
+    return [e, e];
+  }
+  if (statMode === "week")
+    return [ds(new Date(s.getFullYear(), s.getMonth(), s.getDate() - 7)), ds(new Date(s.getFullYear(), s.getMonth(), s.getDate() - 1))];
+  if (statMode === "month")
+    return [ds(new Date(s.getFullYear(), s.getMonth() - 1, 1)), ds(new Date(s.getFullYear(), s.getMonth(), 0))];
+  return [statYear - 1 + "-01-01", statYear - 1 + "-12-31"];
+}
 function home() {
   var net = 0,
     asset = 0,
@@ -426,7 +537,7 @@ function home() {
   var recent = S.tx
     .slice()
     .sort(function (a, b) {
-      return b.date.localeCompare(a.date) || b.ts - a.ts;
+      return b.date.localeCompare(a.date) || (b.ts || 0) - (a.ts || 0);
     })
     .slice(0, 6);
   return (
@@ -447,6 +558,7 @@ function home() {
     '</div></div><div class="sp"><div class="mute">结余</div><div class="num" style="font-size:20px">' +
     fmt(m.i - m.e) +
     "</div></div></div>" +
+    periodCard() +
     todayCard() +
     askCard() +
     annCard() +
@@ -474,7 +586,7 @@ function home() {
 
 function bills() {
   var m = mk(mon),
-    list = (fQ ? S.tx.filter(matchQ) : monthTx(m, fAcc)).sort(function (a, b) {
+    list = (fQ ? S.tx.filter(matchQ) : monthTx(m, fAcc)).filter(billF).sort(function (a, b) {
       return b.date.localeCompare(a.date) || b.ts - a.ts;
     }),
     s = sums(list);
@@ -500,18 +612,27 @@ function bills() {
         );
       })
       .join("") +
-    "</select>" +
+    '</select><select id="fc" style="margin-top:8px">' + fOpts() + "</select>" +
     '<div class="card row"><div class="sp"><div class="mute">收入</div><div class="num inc">' +
     fmt(s.i) +
     '</div></div><div class="sp"><div class="mute">支出</div><div class="num exp">' +
     fmt(s.e) +
     "</div></div></div>";
   if (!list.length) return h + '<div class="empty">这个月没有记录</div>';
-  var cur = "";
+  var cur = "",
+    dayE = {};
+  list.forEach(function (t) {
+    if (t.type === "expense") dayE[t.date] = (dayE[t.date] || 0) + cvt(t.amt, t);
+  });
   list.forEach(function (t) {
     if (t.date !== cur) {
       cur = t.date;
-      h += '<div class="date">' + cur.slice(5).replace("-", "月") + "日</div>";
+      h +=
+        '<div class="date row"><span class="sp">' +
+        (fQ ? cur : cur.slice(5).replace("-", "月") + "日") +
+        "</span>" +
+        (dayE[cur] ? "<span>支出 " + fmt(dayE[cur]) + "</span>" : "") +
+        "</div>";
     }
     h += '<div class="card" style="margin:6px 0;padding:0 14px">' + txRow(t) + "</div>";
   });
@@ -654,6 +775,48 @@ function stats() {
     r.label +
     '</b><button data-sn="1" aria-label="下一个">›</button></div>';
 
+  var pv = prevRange(r),
+    ptot = expIn(pv[0], pv[1]),
+    df = tot - ptot,
+    cmp = "",
+    hl = "";
+  if (df !== 0)
+    cmp =
+      '<div class="mute">较上一' + { day: "天", week: "周", month: "个月", year: "年" }[statMode] +
+      '：<span class="' + (df > 0 ? "exp" : "inc") + '">' + (df > 0 ? "↑ " : "↓ ") + fmt(Math.abs(df)) +
+      (ptot ? "（" + Math.abs((df / ptot) * 100).toFixed(0) + "%）" : "") + "</span></div>";
+  if (statMode !== "day" && tot > 0) {
+    var bk = Object.keys(sub).sort(function (a, b) {
+        return sub[b] - sub[a];
+      })[0],
+      bt = null;
+    list.forEach(function (t) {
+      if (t.type !== "expense") return;
+      var v = cvt(t.amt, t);
+      if (!bt || v > bt.v) bt = { v: v, t: t };
+    });
+    hl =
+      '<div class="mute">最高 ' + (statMode === "year" ? +bk.slice(5, 7) + "月" : bk.slice(5).replace("-", "月") + "日") +
+      " " + fmt(sub[bk]) + (bt ? " · 最大一笔 " + esc(bt.t.cat) + " " + fmt(bt.v) : "") + "</div>";
+  }
+  var pie = "";
+  if (tot > 0) {
+    var acc0 = 0;
+    pie =
+      '<div style="position:relative;width:130px;height:130px;border-radius:50%;margin:10px auto;background:conic-gradient(' +
+      keys
+        .filter(function (k) {
+          return by[k] > 0;
+        })
+        .map(function (k, i) {
+          var p = (by[k] / tot) * 100,
+            x = PAL[i % PAL.length] + " " + acc0 + "% " + (acc0 + p) + "%";
+          acc0 += p;
+          return x;
+        })
+        .join(",") +
+      ')"><div class="mute" style="position:absolute;inset:28px;border-radius:50%;background:var(--card);display:grid;place-items:center">支出</div></div>';
+  }
   // 总开销
   var st = pd(r.a),
     en = pd(r.b),
@@ -672,18 +835,23 @@ function stats() {
     " · 结余 " +
     fmt(inc - tot) +
     avg +
-    "</div></div>";
+    "</div>" +
+    cmp +
+    hl +
+    "</div>";
 
   // 分类明细
-  h += '<div class="card"><b>分类支出</b>';
+  h += '<div class="card"><b>分类支出</b>' + pie;
   h += keys.length
     ? keys
-        .map(function (k) {
+        .map(function (k, ki) {
           var bd = statMode === "month" ? S.budget[k] || 0 : 0,
             p = bd ? Math.min((by[k] / bd) * 100, 100) : tot ? (by[k] / tot) * 100 : 0,
             ov = bd && by[k] > bd;
           return (
-            '<div class="item"><div class="row"><span class="sp">' +
+            '<div class="item"><div class="row"><span class="sp"><i style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:' +
+            PAL[ki % PAL.length] +
+            '"></i>' +
             ci(k) +
             " " +
             esc(k) +
@@ -815,7 +983,7 @@ function settings() {
     "<details" + (ratesMore ? " open" : "") +
     ' style="margin-top:12px"><summary class="mute" style="cursor:pointer">其他币种汇率（USD、EUR、JPY…）</summary>' +
     rateRows(CURS_MORE) +
-    "</details></div>";
+    '</details><button class="btn" id="fxb" style="margin-top:12px">🔄 自动更新汇率（会覆盖手动值）</button></div>';
   [
     ["expense", "支出分类"],
     ["income", "收入分类"],
@@ -855,7 +1023,7 @@ function settings() {
 }
 function backup(k) {
   if (k === "csv") {
-    csv();
+    csvSheet();
     return;
   }
   if (k === "rst") {
@@ -884,6 +1052,9 @@ function backup(k) {
     return;
   }
   if (k === "out") {
+    try {
+      localStorage.setItem("ledger.lastbk", Date.now());
+    } catch (e) {}
     var m = openSheet(
       '<b>导出备份</b><div class="mute">复制下面全部文字，保存到备忘录或发给自己</div><textarea id="j" readonly></textarea>',
     );
@@ -955,6 +1126,8 @@ function accSheet2(id) {
       (a.due || "") +
       '"><label>初始余额（信用卡欠款填负数）</label><input id="b" type="number" inputmode="decimal" step="0.01" value="' +
       (+a.bal || 0) +
+      '"><label>余额低于多少提醒我（选填，预付卡 / 电子钱包用）</label><input id="lw" type="number" inputmode="decimal" step="0.01" value="' +
+      (a.low || "") +
       '"><label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="hd"' +
       (a.hide ? " checked" : "") +
       '> 隐藏这个账户（不在总览和记账选择里显示）</label><button class="btn" id="ok">保存</button>' +
@@ -1010,6 +1183,7 @@ function accSheet2(id) {
           cur: cur,
           bal: bal,
           due: du,
+          low: parseFloat(m.querySelector("#lw").value) || undefined,
           hide: m.querySelector("#hd").checked ? 1 : undefined,
         });
       else {
@@ -1018,6 +1192,7 @@ function accSheet2(id) {
         a.cur = cur;
         a.bal = bal;
         a.due = du;
+        a.low = parseFloat(m.querySelector("#lw").value) || undefined;
         a.hide = m.querySelector("#hd").checked ? 1 : undefined;
       }
       save();
@@ -1088,6 +1263,22 @@ function alerts() {
   monthTx(mk(td)).forEach(function (t) {
     if (t.type === "expense") by[t.cat] = (by[t.cat] || 0) + cvt(t.amt, t);
   });
+  var tb = S.tbud,
+    tm = 0;
+  Object.keys(by).forEach(function (k) {
+    tm += by[k];
+  });
+  if (tb > 0) {
+    var dl = new Date(td.getFullYear(), td.getMonth() + 1, 0).getDate() - td.getDate() + 1,
+      left = tb - tm,
+      pc = Math.round((tm / tb) * 100);
+    h +=
+      '<div class="item"><div class="row"><div class="ico">' + (tm > tb ? "🚨" : pc >= 80 ? "⚠️" : "💰") +
+      '</div><div class="sp">本月总预算已用 ' + pc + '%<div class="mute">' +
+      (left >= 0 ? "还剩 " + fmt(left) + "，每天可花 " + fmt(left / dl) : "已超支 " + fmt(-left)) +
+      '</div></div><div class="num' + (tm > tb ? " exp" : "") + '">' + fmt(tm) + " / " + fmt(tb) +
+      '</div></div><div class="bar"><i style="width:' + Math.min(pc, 100) + "%" + (tm > tb ? ";background:var(--exp)" : "") + '"></i></div></div>';
+  }
   Object.keys(S.budget).forEach(function (k) {
     var b = S.budget[k],
       v = by[k] || 0;
@@ -1103,6 +1294,24 @@ function alerts() {
         fmt(v) +
         "</div></div>";
   });
+  S.accounts.forEach(function (a) {
+    if (!(a.low > 0)) return;
+    var lb2 = balance(a);
+    if (lb2 < a.low)
+      h +=
+        '<div class="item row"><div class="ico">🔋</div><div class="sp">' + esc(a.name) + " 余额只剩 " + fmt(lb2, a.cur) +
+        '<div class="mute">低于 ' + fmt(a.low, a.cur) + "，该充值了</div></div></div>";
+  });
+  try {
+    if (!RO && !(DBR && lsGet())) {
+      var lb = +localStorage.getItem("ledger.lastbk") || +localStorage.getItem("ledger.first") || 0;
+      if (!lb) localStorage.setItem("ledger.first", Date.now());
+      else if (S.tx.length && Date.now() - lb > 7 * 864e5)
+        h +=
+          '<div class="item row"><div class="ico">🗄️</div><div class="sp">已经 ' + Math.floor((Date.now() - lb) / 864e5) +
+          ' 天没备份了<div class="mute">数据只存在这台手机里</div></div><button class="chip on" data-bk="out">备份</button></div>';
+    }
+  } catch (e) {}
   S.accounts.forEach(function (a) {
     if (a.type !== "credit" || !a.due) return;
     var b = balance(a);
@@ -1132,7 +1341,7 @@ function more() {
     favCard() +
     '<div class="card"><b>月预算（' +
     S.base +
-    '）</b><div class="mute">留空表示不设预算，超过 80% 会在总览提醒</div>' +
+    '）</b><div class="mute">留空表示不设预算，超过 80% 会在总览提醒</div><div class="row item"><span class="sp">💰 本月总预算</span><input type="number" inputmode="decimal" style="width:110px" data-tbud="1" value="' + (S.tbud || "") + '"></div>' +
     S.cats.expense
       .map(function (c) {
         return (
@@ -1213,50 +1422,6 @@ function more() {
     (S.pin ? '<button class="chip" data-act="pinoff">关闭</button>' : "") +
     "</div></div>";
   return h;
-}
-function recSheet() {
-  var m = openSheet(
-    '<b>定期账单</b><label>名称</label><input id="rn" placeholder="房租、Unifi、Netflix"><label>金额</label><input id="ra" type="number" inputmode="decimal" step="0.01"><label>扣款账户</label><select id="rc">' +
-      S.accounts
-        .map(function (a) {
-          return '<option value="' + a.id + '">' + esc(a.name) + " (" + a.cur + ")</option>";
-        })
-        .join("") +
-      '</select><label>分类</label><select id="rt">' +
-      S.cats.expense
-        .map(function (c) {
-          return "<option>" + esc(c) + "</option>";
-        })
-        .join("") +
-      '</select><label>每月几号</label><input id="rd" type="number" min="1" max="28" value="1">' +
-      recJ() +
-      '<button class="btn" id="ok">保存</button>',
-  );
-  m.querySelector("#ok").onclick = function () {
-    var g = function (i) {
-        return m.querySelector("#" + i).value;
-      },
-      n = g("rn").trim(),
-      a = parseFloat(g("ra")),
-      d = Math.min(28, Math.max(1, parseInt(g("rd")) || 1));
-    if (!n || !(a > 0) || !S.accounts.length) {
-      alert("请填写名称和金额");
-      return;
-    }
-    var td = new Date(),
-      r = { id: uid(), name: n, amt: a, acc: g("rc"), cat: g("rt"), day: d };
-    var rp = m.querySelector("#rp");
-    if (rp) {
-      r.byId = rp.value;
-      r.by = rp.options[rp.selectedIndex].dataset.n;
-      if (m.querySelector("#ra2").checked) r.aa = 1;
-    }
-    if (d <= td.getDate()) r.last = mk(td);
-    S.rec.push(r);
-    save();
-    m.remove();
-    render();
-  };
 }
 function act(a, i) {
   if (a === "addrec") recSheet();
@@ -1433,32 +1598,6 @@ function drawIcon(c) {
   }
   bear(c, "f", 1);
   return;
-  var x = c.getContext("2d"),
-    s = c.width,
-    u = s / 100,
-    g = x.createLinearGradient(0, 0, s, s);
-  g.addColorStop(0, "#13876f");
-  g.addColorStop(1, "#0a4437");
-  x.fillStyle = g;
-  x.fillRect(0, 0, s, s);
-  x.fillStyle = "#f6f3e8";
-  rr(x, 24 * u, 18 * u, 52 * u, 64 * u, 6 * u);
-  x.fill();
-  x.fillStyle = "#0a4437";
-  x.fillRect(24 * u, 18 * u, 9 * u, 64 * u);
-  x.fillStyle = "#c9d8d2";
-  [32, 44, 56].forEach(function (y) {
-    x.fillRect(40 * u, y * u, 28 * u, 3.5 * u);
-  });
-  x.fillStyle = "#f2b632";
-  x.beginPath();
-  x.arc(68 * u, 70 * u, 16 * u, 0, 7);
-  x.fill();
-  x.fillStyle = "#0a4437";
-  x.font = "bold " + 24 * u + "px sans-serif";
-  x.textAlign = "center";
-  x.textBaseline = "middle";
-  x.fillText("$", 68 * u, 71 * u);
 }
 var LK = {};
 function icons() {
@@ -1496,6 +1635,11 @@ function lock() {
 }
 document.addEventListener("visibilitychange", function () {
   if (document.hidden) lock();
+  else if (!RO && S && S.rec) {
+    var n0 = S.tx.length;
+    runRec();
+    if (S.tx.length !== n0) render();
+  }
 });
 var CI = {
   餐饮: "🍜",
@@ -1626,16 +1770,6 @@ function ci(c) {
   if (CI[c]) return CI[c];
   var b2 = brand(c);
   return b2 ? badge(b2) : "🏷️";
-}
-function addCat(k) {
-  var nm = (prompt("新分类名称") || "").trim();
-  if (!nm) return "";
-  if (S.cats[k].indexOf(nm) < 0) {
-    S.cats[k].push(nm);
-    S.ci[nm] = (prompt("图标（输入一个 emoji，可留空）") || "").trim() || "🏷️";
-  }
-  save();
-  return nm;
 }
 function catSheet(k, i) {
   var nm = S.cats[k][i];
@@ -2121,31 +2255,6 @@ async function initShare() {
     shState = "off";
   }
 }
-function shareCardOld() {
-  var on = lsGet(),
-    t =
-      shState === "off"
-        ? "还没有设置同步，点下面的「同步设置」"
-        : shState === "ok"
-          ? on
-            ? "已开启：你们的记录会自动同步"
-            : "未开启"
-          : "连接中…";
-  return (
-    '<div class="card"><b>共享账本</b><div class="mute" style="margin:4px 0 8px">' +
-    t +
-    '</div><div class="mute">开启后以共享账本为准：云端已有数据时会覆盖本机数据；云端还没有时会上传本机数据。双方都要开启。同时修改时，后保存的会覆盖先保存的。PIN 锁不会共享。</div>' +
-    (window.SYNC
-      ? '<button class="chip on" style="margin:8px 8px 0 0" data-act="setup">⚙ 同步设置</button>'
-      : "") +
-    (shState === "ok"
-      ? '<button class="chip on" style="margin-top:8px" data-act="share">' +
-        (on ? "关闭共享" : "开启共享") +
-        "</button>"
-      : "") +
-    "</div>"
-  );
-}
 function shareCard() {
   var on = lsGet(),
     t =
@@ -2617,13 +2726,16 @@ function favCard() {
     "</div></div>"
   );
 }
-async function csv() {
+async function csv(from, to) {
   try {
     var dl = await claude.use("downloads");
     if (!dl) return;
-    var rows = [["日期", "类型", "账户", "分类", "金额", "币种", "备注", "记录人"]];
+    var rows = [["日期", "类型", "账户", "分类", "金额", "币种", "备注", "记录人", "折合 " + S.base, "手填MYR"]];
     S.tx
       .slice()
+      .filter(function (t) {
+        return (!from || t.date >= from) && (!to || t.date <= to);
+      })
       .sort(function (a, b) {
         return a.date.localeCompare(b.date);
       })
@@ -2638,6 +2750,8 @@ async function csv() {
           a.cur || "",
           t.note || "",
           t.by || "",
+          t.type === "transfer" ? "" : +cvt(t.amt, t).toFixed(2),
+          t.myr || "",
         ]);
       });
     var s =
@@ -2652,6 +2766,7 @@ async function csv() {
         })
         .join("\n");
     await dl.save({ filename: "ledger.csv", data: s });
+    toast("已导出 " + (rows.length - 1) + " 条记录");
   } catch (e) {}
 }
 function hashGo() {
@@ -2690,77 +2805,6 @@ function askNum(t, cb) {
     if (v > 0) {
       m.remove();
       cb(v);
-    }
-  };
-}
-function goalSheet() {
-  var m = openSheet(
-    '<b>新储蓄目标</b><label>名称</label><input id="gn" placeholder="旅行基金、买相机"><label>目标金额（' +
-      S.base +
-      '）</label><input id="gt" type="number" inputmode="decimal">' +
-      pF(0) +
-      '<button class="btn" id="ok">添加</button>',
-  );
-  m.querySelector("#ok").onclick = function () {
-    var n = m.querySelector("#gn").value.trim(),
-      t = parseFloat(m.querySelector("#gt").value),
-      q = m.querySelector("#pv");
-    if (n && t > 0) {
-      S.goals.push({ id: uid(), name: n, target: t, saved: 0, p: q && q.checked ? 1 : undefined });
-      save();
-      m.remove();
-      render();
-    }
-  };
-}
-function annSheet() {
-  var m = openSheet(
-    '<b>新纪念日</b><label>名称</label><input id="an2" placeholder="在一起、生日、第一次约会"><label>日期</label><input id="ad" type="date" value="' +
-      today() +
-      '"><label>类型</label><select id="at"><option value="y">每年纪念（倒数天数）</option><option value="s">在一起起算（已经几天）</option></select>' +
-      pF(0) +
-      '<button class="btn" id="ok">添加</button>',
-  );
-  m.querySelector("#ok").onclick = function () {
-    var n = m.querySelector("#an2").value.trim(),
-      d = m.querySelector("#ad").value,
-      q = m.querySelector("#pv");
-    if (n && d) {
-      (S.ann = S.ann || []).push({
-        id: uid(),
-        name: n,
-        date: d,
-        since: m.querySelector("#at").value === "s" ? 1 : undefined,
-        p: q && q.checked ? 1 : undefined,
-      });
-      save();
-      m.remove();
-      render();
-    }
-  };
-}
-function wishSheet() {
-  var m = openSheet(
-    '<b>想买的东西</b><label>名称</label><input id="wn" placeholder="相机、包包、机票"><label>价格（' +
-      S.base +
-      '，选填）</label><input id="wp" type="number" inputmode="decimal">' +
-      pF(0) +
-      '<button class="btn" id="ok">添加</button>',
-  );
-  m.querySelector("#ok").onclick = function () {
-    var n = m.querySelector("#wn").value.trim(),
-      p = parseFloat(m.querySelector("#wp").value) || 0,
-      q = m.querySelector("#pv");
-    if (n) {
-      (S.wish = S.wish || []).push({
-        id: uid(),
-        name: n,
-        price: p,
-        p: q && q.checked ? 1 : undefined,
-      });
-      save();
-      m.remove();
-      render();
     }
   };
 }
@@ -3226,7 +3270,10 @@ function two(b, t) {
   return false;
 }
 function toast(t) {
+  var old = document.getElementById("toast0");
+  if (old) old.remove();
   var d = document.createElement("div");
+  d.id = "toast0";
   d.textContent = t;
   d.style.cssText =
     "position:fixed;left:50%;bottom:110px;transform:translateX(-50%);background:#4a2a33;color:#fff;padding:10px 16px;border-radius:14px;z-index:200;max-width:80%;text-align:center";
@@ -3287,17 +3334,112 @@ function undo() {
   save();
   render();
 }
+// 收据照片存在 IndexedDB（容量大），账本数据里 img 只留一个标记 1
+var IDB = null;
+function idb() {
+  return (
+    IDB ||
+    (IDB = new Promise(function (ok) {
+      try {
+        var q = indexedDB.open("ledger-img", 1);
+        q.onupgradeneeded = function () {
+          q.result.createObjectStore("img");
+        };
+        q.onsuccess = function () {
+          ok(q.result);
+        };
+        q.onerror = q.onblocked = function () {
+          ok(null);
+        };
+      } catch (e) {
+        ok(null);
+      }
+    }))
+  );
+}
+function imgOp(mode, fn) {
+  return idb().then(function (d) {
+    if (!d) return null;
+    return new Promise(function (ok) {
+      try {
+        var tr = d.transaction("img", mode),
+          r = fn(tr.objectStore("img"));
+        tr.oncomplete = function () {
+          ok(r ? r.result : true);
+        };
+        tr.onerror = tr.onabort = function () {
+          ok(null);
+        };
+      } catch (e) {
+        ok(null);
+      }
+    });
+  });
+}
+function imgPut(id, u) {
+  return imgOp("readwrite", function (s) {
+    return s.put(u, id);
+  });
+}
+function imgGet(id) {
+  return imgOp("readonly", function (s) {
+    return s.get(id);
+  });
+}
+function imgDel(id) {
+  return imgOp("readwrite", function (s) {
+    return s["delete"](id);
+  });
+}
+// 把还留在账本里的旧照片（base64）搬进 IndexedDB，账本里只留标记
+function imgMigrate() {
+  if (cur !== "mine") return;
+  S.tx
+    .filter(function (t) {
+      return typeof t.img === "string" && t.img.indexOf("data:") === 0;
+    })
+    .forEach(function (t) {
+      imgPut(t.id, t.img).then(function (r) {
+        if (!r || cur !== "mine") return;
+        var x = S.tx.find(function (y) {
+          return y.id === t.id;
+        });
+        if (!x || x.img !== t.img) return;
+        x.img = 1;
+        LM.rebase("mine", S);
+        try {
+          localStorage.setItem(KEY, JSON.stringify(S));
+        } catch (e) {}
+      });
+    });
+}
+// 清掉已经没有对应记录的照片（启动时跑一次，不影响刚删除后的撤销）
+function imgGC() {
+  if (cur !== "mine" || !S.tx.length) return;
+  imgOp("readonly", function (s) {
+    return s.getAllKeys();
+  }).then(function (ks) {
+    if (!ks || ks === true) return;
+    var live = {};
+    S.tx.forEach(function (t) {
+      if (t.img) live[t.id] = 1;
+    });
+    ks.forEach(function (k) {
+      if (!live[k]) imgDel(k);
+    });
+  });
+}
 function squash(f, cb) {
   var r = new FileReader();
   r.onload = function () {
     var im = new Image();
     im.onload = function () {
-      var k = Math.min(1, 560 / Math.max(im.width, im.height)),
+      var k = Math.min(1, 900 / Math.max(im.width, im.height)),
         c = document.createElement("canvas");
       c.width = im.width * k;
       c.height = im.height * k;
       c.getContext("2d").drawImage(im, 0, 0, c.width, c.height);
-      cb(c.toDataURL("image/jpeg", 0.6));
+      cb(c.toDataURL("image/jpeg", 0.7));
     };
     im.src = r.result;
   };
@@ -3796,15 +3938,23 @@ function txSheet(edit, pre) {
       "</select>"
     );
   }
+  function imgShow(id) {
+    imgGet(id).then(function (u) {
+      var el = sh.querySelector("#rimv");
+      if (el && u && typeof u === "string") el.src = u;
+    });
+    return "";
+  }
   function imgF() {
     if (cur !== "mine") return "";
     return (
       "<label>收据照片（只存在这台手机，不同步）</label>" +
       (t.img
-        ? '<img alt="" src="' +
-          t.img +
-          '" style="width:100%;border-radius:12px"><button class="chip" id="rmimg" style="margin:6px 0">移除照片</button>'
+        ? '<img id="rimv" alt=""' +
+          (t.img === 1 ? "" : ' src="' + t.img + '"') +
+          ' style="width:100%;border-radius:12px"><button class="chip" id="rmimg" style="margin:6px 0">移除照片</button>'
         : "") +
+      (t.img === 1 && t.id ? imgShow(t.id) : "") +
       '<input type="file" accept="image/*" id="rimg">'
     );
   }
@@ -4043,87 +4193,17 @@ function txSheet(edit, pre) {
       else S.tx.push(rec);
       if (cur === "joint") mirror(rec);
       save();
+      imgMigrate();
       m.remove();
       render();
     }
   });
 }
 
-function accSheet(id) {
-  var a = id === "new" ? { name: "", type: "bank", bal: 0 } : acc(id);
-  var m = openSheet(
-    "<b>" +
-      (id === "new" ? "新账户" : "编辑账户") +
-      '</b><label>名称</label><input id="n" value="' +
-      esc(a.name) +
-      '" placeholder="例如：招商银行、支付宝"><label>类型</label><div class="chips">' +
-      Object.keys(TYPES)
-        .map(function (k) {
-          return (
-            '<button class="chip' +
-            (k === a.type ? " on" : "") +
-            '" data-k="' +
-            k +
-            '">' +
-            TYPES[k][1] +
-            " " +
-            TYPES[k][0] +
-            "</button>"
-          );
-        })
-        .join("") +
-      '</div><label>初始余额（信用卡欠款填负数）</label><input id="b" type="number" inputmode="decimal" step="0.01" value="' +
-      (+a.bal || 0) +
-      '"><button class="btn" id="ok">保存</button>' +
-      (id !== "new" ? '<button class="btn ghost" id="del">删除账户</button>' : ""),
-  );
-  var type = a.type;
-  m.addEventListener("click", function (e) {
-    var b = e.target.closest("button");
-    if (!b) return;
-    if (b.dataset.k) {
-      type = b.dataset.k;
-      m.querySelectorAll("[data-k]").forEach(function (x) {
-        x.classList.toggle("on", x === b);
-      });
-    } else if (b.id === "ok") {
-      var n = m.querySelector("#n").value.trim();
-      if (!n) {
-        alert("请填写账户名称");
-        return;
-      }
-      var bal = parseFloat(m.querySelector("#b").value) || 0;
-      if (id === "new") S.accounts.push({ id: uid(), name: n, type: type, bal: bal });
-      else {
-        a.name = n;
-        a.type = type;
-        a.bal = bal;
-      }
-      save();
-      m.remove();
-      render();
-    } else if (b.id === "del") {
-      var used = S.tx.some(function (t) {
-        return t.acc === id || t.to === id;
-      });
-      if (two(b, used ? "再点一次：账户和它的所有记录都会删除" : "再点一次确认删除")) {
-        S.accounts = S.accounts.filter(function (x) {
-          return x.id !== id;
-        });
-        S.tx = S.tx.filter(function (t) {
-          return t.acc !== id && t.to !== id;
-        });
-        save();
-        m.remove();
-        render();
-      }
-    }
-  });
-}
 
 document.addEventListener("click", function (e) {
   var el = e.target.closest(
-    "[data-tab],[data-go],[data-tx],[data-acc],[data-m],[data-sm],[data-sn],[data-sd],[data-base],[data-addcat],[data-delcat],[data-bk],[data-act]",
+    "[data-tab],[data-go],[data-tx],[data-acc],[data-m],[data-hm],[data-sm],[data-sn],[data-sd],[data-base],[data-addcat],[data-delcat],[data-bk],[data-act]",
   );
   if (e.target.id === "cam") {
     document.getElementById("shot").click();
@@ -4133,6 +4213,10 @@ document.addEventListener("click", function (e) {
     txSheet();
     return;
   }
+  if (e.target.id === "fxb") {
+    fxUpdate();
+    return;
+  }
   if (!el || el.closest(".mask")) return;
   if (
     RO &&
@@ -4140,6 +4224,7 @@ document.addEventListener("click", function (e) {
       el.dataset.tab ||
       el.dataset.go ||
       el.dataset.m ||
+      el.dataset.hm ||
       el.dataset.sm ||
       el.dataset.sn ||
       el.dataset.sd ||
@@ -4151,6 +4236,15 @@ document.addEventListener("click", function (e) {
   if (el.dataset.tab) {
     backTo = "";
     tab = el.dataset.tab;
+    render();
+  } else if (el.dataset.hm) {
+    statMode = el.dataset.hm;
+    statDay = today();
+    statWeek = new Date();
+    mon = new Date();
+    statYear = new Date().getFullYear();
+    backTo = tab;
+    tab = "stats";
     render();
   } else if (el.dataset.sm) {
     statMode = el.dataset.sm;
@@ -4188,12 +4282,6 @@ document.addEventListener("click", function (e) {
   } else if (el.dataset.delcat) {
     var q = el.dataset.delcat.split(":");
     catSheet(q[0], +q[1]);
-    return;
-    if (confirm("删除分类“" + S.cats[q[0]][q[1]] + "”？旧记录会保留。")) {
-      S.cats[q[0]].splice(+q[1], 1);
-      save();
-      render();
-    }
   } else if (el.dataset.bk) {
     backup(el.dataset.bk);
   } else if (el.dataset.act) {
@@ -4209,9 +4297,18 @@ document.addEventListener("change", function (e) {
     e.target.value = "";
     return;
   }
+  if (e.target.id === "fc") {
+    fF = e.target.value;
+    render();
+  }
   if (e.target.id === "fa") {
     fAcc = e.target.value;
     render();
+  }
+  if (e.target.dataset.tbud) {
+    var tv = parseFloat(e.target.value);
+    S.tbud = tv > 0 ? tv : undefined;
+    save();
   }
   if (e.target.dataset.bud) {
     var bv = parseFloat(e.target.value);
@@ -4242,6 +4339,11 @@ document.addEventListener("input", function (e) {
 runRec();
 autoReveal();
 render();
+imgMigrate();
+imgGC();
+try {
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+} catch (e) {}
 lock();
 initShare();
 window.addEventListener("hashchange", hashGo);

@@ -30,7 +30,18 @@
       })
       .join("");
   }
-  async function init() {
+  var initP = null;
+  function init() {
+    if (keyP) return Promise.resolve();
+    return (
+      initP ||
+      (initP = doInit().catch(function (e) {
+        initP = null;
+        throw e;
+      }))
+    );
+  }
+  async function doInit() {
     if (keyP) return;
     var base = await crypto.subtle.importKey("raw", enc.encode(cfg.pass), "PBKDF2", false, [
       "deriveKey",
@@ -84,7 +95,9 @@
     var j = await de(v.c);
     // 解密失败不能当成“云端没有数据”，否则会用本机数据覆盖云端
     if (j == null) throw new Error("decrypt");
-    return { json: j, t: v.t || 0, name: v.n || "" };
+    var nm = v.n || "";
+    if (nm.indexOf("e1:") === 0) nm = (await de(nm.slice(3))) || "";
+    return { json: j, t: v.t || 0, name: nm };
   }
   async function toDocSafe(v) {
     try {
@@ -116,7 +129,11 @@
         await init();
         var r = await fetch(url(p), {
           method: "PUT",
-          body: JSON.stringify({ c: await en(d.json), t: d.t || Date.now(), n: cfg.name }),
+          body: JSON.stringify({
+            c: await en(d.json),
+            t: d.t || Date.now(),
+            n: "e1:" + (await en(cfg.name)),
+          }),
         });
         if (!r.ok) throw new Error("http " + r.status);
       },
@@ -189,7 +206,10 @@
             } catch (e) {}
           };
         run();
-        setInterval(run, 6000);
+        var iv = setInterval(run, 6000);
+        return function () {
+          clearInterval(iv);
+        };
       },
     };
   }
