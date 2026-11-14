@@ -182,16 +182,11 @@ function acc(id) {
     return a.id === id;
   });
 }
-function amountInCurrency(t, target) {
-  var from = t.myr != null && isFinite(+t.myr) ? "MYR" : (t.cur || ((acc(t.acc) || {}).cur) || "MYR");
-  var amount = t.myr != null && isFinite(+t.myr) ? +t.myr : (+t.amt || 0);
-  return conv(amount, from, target);
-}
 function balance(a) {
   var b = +a.bal || 0;
   S.tx.forEach(function (t) {
-    if (t.type === "income" && t.acc === a.id) b += amountInCurrency(t, a.cur);
-    if (t.type === "expense" && t.acc === a.id) b -= amountInCurrency(t, a.cur);
+    if (t.type === "income" && t.acc === a.id) b += t.amt;
+    if (t.type === "expense" && t.acc === a.id) b -= t.amt;
     if (t.type === "transfer") {
       if (t.acc === a.id) b -= t.amt + (t.fee || 0);
       if (t.to === a.id) b += t.toAmt != null ? t.toAmt : t.amt;
@@ -218,9 +213,8 @@ function monthTx(m, a) {
   });
 }
 function cvt(x, t) {
-  if (t.myr != null && isFinite(+t.myr)) return conv(+t.myr, "MYR", S.base);
   var a = acc(t.acc);
-  return conv(x, t.cur || (a ? a.cur : "MYR"), S.base);
+  return conv(x, a ? a.cur : t.cur || "MYR", S.base);
 }
 function sums(list) {
   var i = 0,
@@ -331,17 +325,11 @@ function txRow(t) {
     title +
     '</div><div class="mute ellip">' +
     sub +
-    '</div></div><div><div class="num ' +
+    '</div></div><div class="num ' +
     cls +
     '">' +
     sign +
-    fmt(t.amt, t.type === "transfer" ? a.cur : (t.cur || a.cur)).replace("-", "") +
-    "</div>" +
-    (t.type !== "transfer" && (t.cur || a.cur) !== "MYR"
-      ? '<div class="mute" style="font-size:10px;text-align:right">≈ ' +
-        fmt(t.myr != null && isFinite(+t.myr) ? +t.myr : conv(t.amt, t.cur || a.cur, "MYR"), "MYR") +
-        "</div>"
-      : "") +
+    fmt(t.amt, a.cur).replace("-", "") +
     "</div></div>"
   );
 }
@@ -488,27 +476,7 @@ function stats() {
     mon.getFullYear() +
     "年" +
     (mon.getMonth() + 1) +
-    '月支出</b><button data-m="1" aria-label="下个月">›</button></div>';
-  var now = new Date(), weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
-  var weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 6);
-  var weekDays = [], weekTotal = 0, weekMax = 0, weekMaxLabel = "";
-  for (var wi = 0; wi < 7; wi++) {
-    var wd = new Date(weekStart); wd.setDate(weekStart.getDate() + wi);
-    var wds = wd.getFullYear() + "-" + String(wd.getMonth()+1).padStart(2,"0") + "-" + String(wd.getDate()).padStart(2,"0");
-    var wv = S.tx.filter(function(t) { return t.date === wds && t.type === "expense"; })
-      .reduce(function(sum, t) { return sum + cvt(t.amt, t); }, 0);
-    weekDays.push({ label: ["一","二","三","四","五","六","日"][wi], value: wv });
-    weekTotal += wv;
-    if (wv > weekMax) { weekMax = wv; weekMaxLabel = "星期" + ["一","二","三","四","五","六","日"][wi]; }
-  }
-  var dateRange = (weekStart.getMonth()+1) + "/" + weekStart.getDate() + " – " + (weekEnd.getMonth()+1) + "/" + weekEnd.getDate();
-  h += '<div class="card"><div class="row"><b class="sp">📅 本星期支出</b><span class="mute">' + dateRange + '</span></div>' +
-    '<div class="big" style="font-size:26px;margin:6px 0">' + fmt(weekTotal) + '</div>' +
-    '<div class="mute">最高支出日：' + (weekMax > 0 ? weekMaxLabel + " · " + fmt(weekMax) : "暂无支出") + '</div>' +
-    '<div class="row" style="align-items:flex-end;gap:8px;margin-top:12px">' +
-    weekDays.map(function(d) { return '<div style="flex:1;text-align:center"><div class="mute" style="font-size:10px">' + fmt(d.value) + '</div><div style="height:64px;display:flex;align-items:flex-end"><i style="display:block;width:100%;height:' + (weekMax ? Math.max(3, d.value/weekMax*100) : 3) + '%;background:var(--exp);border-radius:5px 5px 0 0"></i></div><div class="mute">周' + d.label + '</div></div>'; }).join("") +
-    '</div></div><div class="card">';
+    '月支出</b><button data-m="1" aria-label="下个月">›</button></div><div class="card">';
   h += keys.length
     ? keys
         .map(function (k) {
@@ -3396,9 +3364,7 @@ function txSheet(edit, pre) {
       note: "",
       date: today(),
       fee: "",
-      cur: (S.accounts[0] && S.accounts[0].cur) || S.base,
     };
-  if (!t.cur) t.cur = (acc(t.acc) || {}).cur || S.base;
   if (!S.accounts.length) {
     alert("请先添加一个账户");
     return;
@@ -3451,13 +3417,9 @@ function txSheet(edit, pre) {
       "</div>" +
       '<input class="amt" id="amt" type="number" inputmode="decimal" step="0.01" placeholder="0.00" value="' +
       esc(t.amt) +
-      '">' +
-      (st.type === "transfer" ? "" :
-        '<label>记账货币</label><select id="txcur">' +
-        CURS.map(function(c) { return '<option value="' + c + '"' + ((t.cur || ((acc(t.acc)||{}).cur) || S.base) === c ? " selected" : "") + '>' + (c === "CNY" ? "RMB / CNY" : c) + '</option>'; }).join("") +
-        '</select><label>换算后 MYR（可自行修改）</label><input id="myr" type="number" inputmode="decimal" step="0.01" value="' +
-        esc(t.myr != null ? t.myr : (parseFloat(t.amt) > 0 ? conv(parseFloat(t.amt), t.cur || ((acc(t.acc)||{}).cur) || S.base, "MYR").toFixed(2) : "")) +
-        '"><div class="mute">保存后会以这个 MYR 金额计算总支出和账户余额</div>') +
+      '"><div class="mute" style="text-align:center">' +
+      ((acc(t.acc) || {}).cur || "") +
+      "</div>" +
       (st.type === "transfer"
         ? '<label>转出账户</label><select id="acc">' +
           opts(t.acc) +
@@ -3628,8 +3590,6 @@ function txSheet(edit, pre) {
       return e ? e.value : "";
     };
     t.amt = g("amt");
-    t.cur = g("txcur") || t.cur || ((acc(t.acc) || {}).cur) || S.base;
-    t.myr = g("myr") === "" ? undefined : (parseFloat(g("myr")) || 0);
     t.acc = g("acc") || t.acc;
     t.to = g("to") || t.to;
     t.fee = g("fee");
@@ -3651,15 +3611,6 @@ function txSheet(edit, pre) {
     t.note = g("nt");
   }
   draw();
-  sh.addEventListener("input", function (e) {
-    if (e.target.id === "amt" || e.target.id === "txcur") {
-      var av = parseFloat(sh.querySelector("#amt").value);
-      var ce = sh.querySelector("#txcur");
-      var me = sh.querySelector("#myr");
-      if (me && ce && av > 0) me.value = conv(av, ce.value, "MYR").toFixed(2);
-      else if (me && !(av > 0)) me.value = "";
-    }
-  });
   sh.addEventListener("change", function (e) {
     if (e.target.id === "rimg" && e.target.files[0]) {
       keep();
@@ -3671,12 +3622,7 @@ function txSheet(edit, pre) {
     }
     if (e.target.id === "acc" || e.target.id === "to") {
       keep();
-      if (e.target.id === "acc" && !sh.querySelector("#txcur")) t.cur = (acc(t.acc) || {}).cur || S.base;
       draw();
-    } else if (e.target.id === "txcur") {
-      var av = parseFloat(sh.querySelector("#amt").value);
-      var me = sh.querySelector("#myr");
-      if (me) me.value = av > 0 ? conv(av, e.target.value, "MYR").toFixed(2) : "";
     }
   });
   sh.addEventListener("click", function (e) {
@@ -3774,8 +3720,6 @@ function txSheet(edit, pre) {
             : undefined,
         type: st.type,
         amt: amt,
-        cur: st.type === "transfer" ? undefined : (t.cur || ((acc(t.acc) || {}).cur) || S.base),
-        myr: st.type === "transfer" || t.myr == null || !isFinite(+t.myr) ? undefined : +t.myr,
         acc: t.acc,
         date: t.date,
         note: t.note,
