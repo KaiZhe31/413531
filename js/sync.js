@@ -242,7 +242,7 @@
   function mkCode(u, p) {
     return (
       "LG1-" +
-      b64(enc.encode(JSON.stringify({ u: u, p: p })))
+      btoa(unescape(encodeURIComponent(JSON.stringify({ u: u, p: p }))))
         .replace(/\+/g, "-")
         .replace(/\//g, "_")
         .replace(/=+$/, "")
@@ -259,7 +259,7 @@
         .replace(/-/g, "+")
         .replace(/_/g, "/");
       while (s.length % 4) s += "=";
-      var o = JSON.parse(dec.decode(ub64(s)));
+      var o = JSON.parse(decodeURIComponent(escape(atob(s))));
       return o && o.u && o.p ? o : null;
     } catch (e) {
       return null;
