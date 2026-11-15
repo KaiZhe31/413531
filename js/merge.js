@@ -8,7 +8,7 @@
  * - 设置类字段（分类、汇率、预算…）以 _t 较新的一边为准
  */
 var LM = (function () {
-  var ARR = ["tx", "goals", "wish", "ann", "accounts", "rec"];
+  var ARR = ["tx", "goals", "wish", "ann", "accounts", "rec", "fav", "cars"];
   var KEEP_DEL_MS = 400 * 24 * 3600 * 1000;
   var BASE = {};
 

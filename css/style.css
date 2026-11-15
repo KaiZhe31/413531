@@ -1,3 +1,17 @@
+@font-face {
+  font-family: "Nunito";
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+  src: url("../fonts/nunito-latin-600-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Nunito";
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+  src: url("../fonts/nunito-latin-800-normal.woff2") format("woff2");
+}
 :root {
   --bg: #eceee8;
   --card: #fff;
@@ -683,4 +697,69 @@ body {
 }
 .btn {
   border-radius: 16px;
+}
+
+/* 聊天室 */
+nav button .dot {
+  position: absolute;
+  top: -4px;
+  left: calc(50% + 6px);
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #ff4d6d;
+  color: #fff;
+  font: 700 10px/16px sans-serif;
+  font-style: normal;
+  text-align: center;
+}
+nav button b {
+  position: relative;
+}
+.cm {
+  display: flex;
+  flex-direction: column;
+  margin: 6px 0;
+}
+.cm.r {
+  align-items: flex-end;
+}
+.cm.l {
+  align-items: flex-start;
+}
+.bub {
+  max-width: 78%;
+  padding: 9px 13px;
+  border-radius: 18px;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+.bub.me {
+  background: linear-gradient(135deg, #f15bb5, #9b5de5);
+  color: #fff;
+  border-bottom-right-radius: 6px;
+}
+.bub.pe {
+  background: var(--card);
+  border-bottom-left-radius: 6px;
+  box-shadow: var(--shadow);
+}
+.cmeta {
+  font-size: 11px;
+  color: var(--mute);
+  margin: 2px 6px 0;
+}
+.chatbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(62px + env(safe-area-inset-bottom, 0px));
+  padding: 8px 12px;
+  background: var(--bg);
+  z-index: 4;
+}
+.chatbar .in {
+  max-width: 560px;
+  margin: 0 auto;
 }

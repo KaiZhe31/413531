@@ -1,4 +1,37 @@
 var KEY = "ledger.v1";
+// 新增的常用分类（名称、图标由 CI 提供、默认细分）。老用户第一次打开时会一次性补进去
+var NEWCATS = [
+  ["外卖", ["GrabFood", "foodpanda", "ShopeeFood", "其他"]],
+  ["咖啡饮料", ["Starbucks", "ZUS Coffee", "Tealive", "Chagee", "Gong Cha", "Luckin", "咖啡", "奶茶"]],
+  ["超市杂货", ["AEON", "Lotus's", "Giant", "99 Speedmart", "Mydin", "Jaya Grocer", "NSK", "Econsave", "7-Eleven", "KK Mart", "菜市场", "水果"]],
+  ["日用品", ["纸巾", "洗衣液", "洗发水", "牙膏", "清洁用品", "Mr DIY", "Watsons", "Guardian"]],
+  ["订阅会员", ["Netflix", "Spotify", "YouTube Premium", "Disney+", "iCloud", "Google One", "ChatGPT", "Claude", "Apple Music", "Canva", "Microsoft 365"]],
+  ["衣服鞋包", ["Uniqlo", "H&M", "Zara", "Padini", "Nike", "Adidas", "鞋子", "包包"]],
+  ["手机数码", ["Apple", "Samsung", "Xiaomi", "Huawei", "充电线", "耳机", "手机壳", "维修"]],
+  ["美容美发", ["理发", "美甲", "护肤", "化妆品", "Sephora"]],
+  ["运动健身", ["健身房", "Anytime Fitness", "羽毛球", "游泳", "Decathlon"]],
+  ["宠物", ["猫粮", "狗粮", "兽医", "猫砂", "玩具"]],
+  ["汽车", ["保养", "洗车", "罚单", "Road Tax", "保险", "轮胎"]],
+  ["保险", ["AIA", "Great Eastern", "Prudential", "Allianz", "Takaful", "医疗卡"]],
+  ["礼物红包", ["红包", "生日礼物", "请客", "孝敬父母", "婚礼红包"]],
+  ["孩子", ["学费", "玩具", "尿布", "奶粉", "衣服"]],
+  ["家居维修", ["家具", "家电", "维修", "IKEA", "装修"]],
+  ["税费罚款", ["所得税", "门牌税", "罚单", "驾照", "手续费"]],
+  ["慈善捐款", ["捐款", "庙宇", "教堂", "天课"]],
+];
+// 给原有分类补上常用细分（只补缺的，不会删你自己加的）
+var SUBADD = {
+  餐饮: ["聚餐", "甜点", "水果"],
+  交通: ["Touch 'n Go", "LRT/MRT", "巴士", "Maxim", "InDrive", "KTM"],
+  购物: ["Shopee", "Lazada", "TikTok Shop", "Mr DIY"],
+  娱乐: ["TGV", "GSC", "Steam", "PlayStation", "KTV", "演唱会"],
+  医疗: ["诊所", "药房", "牙医", "体检", "眼镜"],
+  水电网络: ["TNB 电费", "Air Selangor 水费", "Unifi 宽带", "Time 宽带", "Maxis 宽带", "Astro", "煤气", "Indah Water"],
+  话费充值: ["StarHub", "中国移动"],
+  学习: ["学费", "书本", "网课", "文具", "补习"],
+  房租: ["房租", "管理费", "押金"],
+  油费: ["Petronas", "Shell", "Petron", "Caltex", "BHP", "Setel"],
+};
 var TYPES = {
   cash: ["现金", "💵"],
   bank: ["银行卡", "🏦"],
@@ -146,6 +179,36 @@ function migrate() {
         "redONE", "XOX", "Buzzme", "Speakout", "Singtel", "其他",
       ];
   }
+  if (!S.mig.cats2) {
+    S.mig.cats2 = 1;
+    var ex2 = S.cats.expense;
+    NEWCATS.forEach(function (n) {
+      if (ex2.indexOf(n[0]) < 0) {
+        var oi2 = ex2.indexOf("其他");
+        if (oi2 >= 0) ex2.splice(oi2, 0, n[0]);
+        else ex2.push(n[0]);
+      }
+      if (!S.sub[n[0]]) S.sub[n[0]] = n[1].slice();
+    });
+    Object.keys(SUBADD).forEach(function (k) {
+      var L = (S.sub[k] = S.sub[k] || []);
+      SUBADD[k].forEach(function (x) {
+        if (L.indexOf(x) < 0) L.push(x);
+      });
+    });
+  }
+  S.cars = S.cars || [];
+  S.fav = S.fav || [];
+  // 第一次用快速记账时放 3 个示例模板（可在「快速记账 → 管理模板」里改 / 删）
+  if (!S.mig.qk && cur !== "joint" && cur !== "other") {
+    S.mig.qk = 1;
+    if (!S.fav.length)
+      S.fav.push(
+        { name: "U Mobile 充值", type: "expense", amt: 30, acc: "", cat: "话费充值", sub: "U Mobile" },
+        { name: "早餐", type: "expense", amt: 8, acc: "", cat: "餐饮" },
+        { name: "Grab", type: "expense", amt: 15, acc: "", cat: "交通" },
+      );
+  }
 }
 function fxText(cur, am, mv) {
   var r = S.rates[cur] || 0;
@@ -213,7 +276,11 @@ var tab = "home",
   statYear = new Date().getFullYear(),
   fAcc = "all",
   fQ = "",
-  fF = "all";
+  fF = "all",
+  selMode = false,
+  sel = {},
+  trendCat = "",
+  qManage = false;
 function load() {
   try {
     var r = localStorage.getItem(KEY);
@@ -273,6 +340,12 @@ function acc(id) {
 function balance(a) {
   var b = +a.bal || 0;
   S.tx.forEach(function (t) {
+    if (t.sp && t.sp.pays)
+      t.sp.pays.forEach(function (p) {
+        if (p.acc !== a.id) return;
+        var ta = acc(t.acc);
+        b += ta && ta.cur && a.cur && ta.cur !== a.cur ? conv(p.amt, ta.cur, a.cur) : p.amt;
+      });
     if (t.type === "income" && t.acc === a.id) b += t.amt;
     if (t.type === "expense" && t.acc === a.id) b -= t.amt;
     if (t.type === "transfer") {
@@ -300,11 +373,309 @@ function monthTx(m, a) {
     return t.date.slice(0, 7) === m && (!a || a === "all" || t.acc === a || t.to === a);
   });
 }
+// ---------- 汽车：油耗 / 保养提醒 ----------
+// S.cars = [{ id, name, plate, odo, items: [{ name, km, months, lastKm, lastDate }] }]
+// 加油记录 = 「油费」分类的支出 + t.car / t.odo(里程 km) / t.lit(升数)；按每次加满油计算
+function carFills(id) {
+  return S.tx
+    .filter(function (t) {
+      return t.car === id && t.type === "expense" && t.odo > 0;
+    })
+    .sort(function (a, b) {
+      return a.odo - b.odo;
+    });
+}
+function carStats(c) {
+  var f = carFills(c.id),
+    dist = 0, lit = 0, cost = 0, last = null, pc = 0, pl = 0;
+  f.forEach(function (t, i) {
+    if (t.lit > 0) {
+      pc += cvt(t.amt, t);
+      pl += t.lit;
+    }
+    if (i > 0 && t.lit > 0 && t.odo > f[i - 1].odo) {
+      var d = t.odo - f[i - 1].odo, v = cvt(t.amt, t);
+      dist += d;
+      lit += t.lit;
+      cost += v;
+      last = { km: d, l100: (t.lit / d) * 100, perKm: v / d };
+    }
+  });
+  return { n: f.length, dist: dist, avg: dist ? (lit / dist) * 100 : null, perKm: dist ? cost / dist : null, last: last, price: pl ? pc / pl : null };
+}
+function fuelNow(cid, odo, lit, amt, selfId, cu) {
+  var out = [];
+  if (lit > 0 && amt > 0) out.push("油价 " + fmt(amt / lit, cu) + "/L");
+  var prev = carFills(cid)
+    .filter(function (x) {
+      return x.id !== selfId && x.odo < odo;
+    })
+    .pop();
+  if (prev && odo > prev.odo) {
+    var d = odo - prev.odo;
+    out.push("距上次 " + d + " km");
+    if (lit > 0) out.push("油耗 " + ((lit / d) * 100).toFixed(2) + " L/100km");
+    if (amt > 0) out.push("每公里 " + fmt(amt / d, cu));
+  }
+  return out.length ? out.join(" · ") + "（按每次加满计算）" : "";
+}
+function svcStatus(c, it) {
+  var out = [];
+  if (it.km > 0) {
+    var rem = (+it.lastKm || 0) + +it.km - (+c.odo || 0);
+    out.push({ rem: rem, over: rem < 0, warn: rem <= 500, txt: rem >= 0 ? "还有 " + Math.round(rem) + " km" : "已超过 " + Math.round(-rem) + " km" });
+  }
+  if (it.months > 0 && it.lastDate) {
+    var d0 = pd(it.lastDate),
+      due = new Date(d0.getFullYear(), d0.getMonth() + +it.months, d0.getDate()),
+      days = Math.round((due - pd(today())) / 864e5);
+    out.push({ rem: days, over: days < 0, warn: days <= 30, txt: days >= 0 ? "还有 " + days + " 天（" + ds(due) + "）" : "已超过 " + -days + " 天" });
+  }
+  return out;
+}
+function carNew(cb) {
+  var m = openSheet(
+    '<b>🚗 添加车辆</b><label>名称</label><input id="cn" placeholder="例如：Myvi">' +
+      '<label>车牌（选填）</label><input id="cp"><label>目前里程（km）</label><input id="co" type="number" inputmode="numeric"><button class="btn" id="ok">保存</button>',
+  );
+  m.querySelector("#ok").onclick = function () {
+    var name = m.querySelector("#cn").value.trim();
+    if (!name) return toast("请填车的名称");
+    var odo = parseFloat(m.querySelector("#co").value) || 0,
+      id = uid(),
+      d = today();
+    mark();
+    S.cars.push({
+      id: id, name: name, plate: m.querySelector("#cp").value.trim(), odo: odo,
+      items: [
+        { name: "换机油", km: 10000, months: 6, lastKm: odo, lastDate: d },
+        { name: "路税 Road Tax", months: 12, lastDate: d },
+        { name: "车险", months: 12, lastDate: d },
+        { name: "车检 / 年检", months: 12, lastDate: d },
+      ],
+    });
+    save();
+    m.remove();
+    render();
+    if (cb) cb(id);
+    else carSheet(id);
+  };
+}
+function itemSheet(cid, idx, done) {
+  var c = S.cars.find(function (x) { return x.id === cid; }),
+    it = idx >= 0 ? c.items[idx] : { name: "", lastDate: today(), lastKm: c.odo || "" },
+    m = openSheet(
+      "<b>" + (idx >= 0 ? "修改" : "添加") + '保养项目</b><label>名称</label><input id="in" value="' + esc(it.name) +
+        '" placeholder="例如：换机油、轮胎、电池"><label>每多少 km（不按里程就留空）</label><input id="ik" type="number" inputmode="numeric" value="' + esc(it.km || "") +
+        '"><label>每多少个月（不按时间就留空）</label><input id="im" type="number" inputmode="numeric" value="' + esc(it.months || "") +
+        '"><label>上次做的日期</label><input id="id" type="date" value="' + esc(it.lastDate || "") +
+        '"><label>上次做的里程（km）</label><input id="il" type="number" inputmode="numeric" value="' + esc(it.lastKm || "") + '"><button class="btn" id="ok">保存</button>',
+    );
+  m.querySelector("#ok").onclick = function () {
+    var o = {
+      name: m.querySelector("#in").value.trim(),
+      km: parseFloat(m.querySelector("#ik").value) || undefined,
+      months: parseFloat(m.querySelector("#im").value) || undefined,
+      lastDate: m.querySelector("#id").value || undefined,
+      lastKm: parseFloat(m.querySelector("#il").value) || undefined,
+    };
+    if (!o.name) return toast("请填项目名称");
+    mark();
+    if (idx >= 0) c.items[idx] = o;
+    else c.items.push(o);
+    save();
+    m.remove();
+    render();
+    if (done) done();
+  };
+}
+function svcDoneSheet(cid, idx, done) {
+  var c = S.cars.find(function (x) { return x.id === cid; }),
+    it = c.items[idx],
+    m = openSheet(
+      "<b>✅ " + esc(it.name) + ' 已完成</b><label>日期</label><input id="dd" type="date" value="' + today() +
+        '"><label>当时里程（km）</label><input id="do" type="number" inputmode="numeric" value="' + esc(c.odo || "") +
+        '"><label>花了多少（选填，会同时记一笔「汽车」支出）</label><input id="dc" type="number" inputmode="decimal" step="0.01"><label>用哪个账户付</label><select id="da">' +
+        S.accounts
+          .filter(function (a) { return !a.hide; })
+          .map(function (a) { return '<option value="' + a.id + '">' + esc(a.name) + " (" + a.cur + ")</option>"; })
+          .join("") +
+        '</select><button class="btn" id="ok">确定</button>',
+    );
+  m.querySelector("#da").value = defAcc();
+  m.querySelector("#ok").onclick = function () {
+    var date = m.querySelector("#dd").value || today(),
+      odo = parseFloat(m.querySelector("#do").value) || 0,
+      cost = parseFloat(m.querySelector("#dc").value);
+    mark();
+    it.lastDate = date;
+    if (odo) {
+      it.lastKm = odo;
+      if (odo > (+c.odo || 0)) c.odo = odo;
+    }
+    if (cost > 0)
+      S.tx.push({
+        id: uid(), ts: Date.now(), type: "expense", amt: cost, acc: m.querySelector("#da").value, date: date,
+        note: it.name + " · " + c.name, cat: S.cats.expense.indexOf("汽车") >= 0 ? "汽车" : "其他",
+        sub: S.cats.expense.indexOf("汽车") >= 0 ? "保养" : undefined, car: c.id,
+      });
+    save();
+    m.remove();
+    render();
+    if (done) done();
+  };
+}
+function carSheet(id) {
+  var m = openSheet(""),
+    sh = m.querySelector(".sheet");
+  function C() {
+    return S.cars.find(function (x) { return x.id === id; });
+  }
+  function draw() {
+    var c = C();
+    if (!c) {
+      m.remove();
+      return;
+    }
+    var s = carStats(c),
+      f = carFills(c.id).slice(-5).reverse();
+    sh.innerHTML =
+      '<button class="chip" data-close="1" style="margin-bottom:10px">‹ 返回</button><b>🚗 ' + esc(c.name) + (c.plate ? " · " + esc(c.plate) : "") +
+      '</b><label>目前里程（km）</label><input id="codo" type="number" inputmode="numeric" value="' + esc(c.odo || "") +
+      '"><div class="card" style="margin:12px 0;box-shadow:none;background:var(--accbg)">' +
+      (s.avg != null
+        ? '<div class="num" style="font-size:22px">' + s.avg.toFixed(2) + ' L/100km</div><div class="mute">平均每公里 ' + fmt(s.perKm) +
+          (s.price ? " · 平均油价 " + fmt(s.price) + "/L" : "") + " · 共加油 " + s.n + " 次" +
+          (s.last ? "<br>最近一次：" + s.last.l100.toFixed(2) + " L/100km，每公里 " + fmt(s.last.perKm) : "") + "</div>"
+        : '<div class="mute">在「油费」分类记账时填上「里程」和「升数」，记两次以上就会算出油耗和每公里花费（按每次加满油计算）。</div>') +
+      "</div><b>保养与到期提醒</b>" +
+      (c.items || [])
+        .map(function (it, i) {
+          return (
+            '<div class="item"><div class="row"><div class="sp"><b>' + esc(it.name) + '</b><div class="mute">' +
+            [it.km ? "每 " + it.km + " km" : "", it.months ? "每 " + it.months + " 个月" : ""].filter(Boolean).join(" / ") +
+            (it.lastDate ? " · 上次 " + esc(it.lastDate) : "") + (it.lastKm ? " · " + it.lastKm + " km" : "") + "</div>" +
+            svcStatus(c, it)
+              .map(function (x) {
+                return '<div class="' + (x.over ? "exp" : x.warn ? "" : "mute") + '" style="font-size:13px">' + (x.over ? "🚨 " : x.warn ? "⚠️ " : "") + x.txt + "</div>";
+              })
+              .join("") +
+            '</div><button class="chip on" data-cdone="' + i + '">完成</button><button class="chip" data-cedit="' + i + '">改</button></div></div>'
+          );
+        })
+        .join("") +
+      '<button class="chip" id="cadd" style="margin-top:8px">＋ 添加保养项目</button>' +
+      (f.length
+        ? '<div class="mute" style="margin-top:14px">最近加油</div>' +
+          f
+            .map(function (t) {
+              return '<div class="mute">' + esc(t.date) + " · " + t.odo + " km" + (t.lit ? " · " + t.lit + " L" : "") + " · " + fmt(t.amt, (acc(t.acc) || {}).cur) + "</div>";
+            })
+            .join("")
+        : "") +
+      '<button class="btn ghost" id="crm">删除这辆车</button>';
+  }
+  draw();
+  sh.addEventListener("change", function (e) {
+    if (e.target.id !== "codo") return;
+    C().odo = parseFloat(e.target.value) || 0;
+    save();
+    render();
+    draw();
+  });
+  sh.addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (!b) return;
+    var c = C(),
+      d = b.dataset;
+    if (d.cdone !== undefined) svcDoneSheet(id, +d.cdone, draw);
+    else if (d.cedit !== undefined)
+      itemSheet(id, +d.cedit, draw);
+    else if (b.id === "cadd") itemSheet(id, -1, draw);
+    else if (b.id === "crm") {
+      if (!confirm("删除「" + c.name + "」？以前的加油记录会保留，只是不再关联这辆车")) return;
+      mark();
+      S.cars = S.cars.filter(function (x) { return x.id !== id; });
+      save();
+      m.remove();
+      render();
+    }
+  });
+}
+function carCard() {
+  if (cur !== "mine") return "";
+  var h = '<div class="card"><b>🚗 车辆与油耗</b>';
+  if (!S.cars.length) h += '<div class="mute">记录加油的里程和升数，自动算油耗和每公里花费；保养、路税、车险到期会提醒你。</div>';
+  S.cars.forEach(function (c) {
+    var s = carStats(c),
+      w = [];
+    (c.items || []).forEach(function (it) {
+      svcStatus(c, it).forEach(function (x) {
+        if (x.warn) w.push((x.over ? "🚨 " : "⚠️ ") + it.name + " " + x.txt);
+      });
+    });
+    h +=
+      '<div class="item row" data-car="' + c.id + '" style="cursor:pointer"><div class="ico">🚗</div><div class="sp"><b>' + esc(c.name) +
+      (c.plate ? " · " + esc(c.plate) : "") + '</b><div class="mute">' + (c.odo ? c.odo + " km" : "未填里程") +
+      (s.avg != null ? " · " + s.avg.toFixed(2) + " L/100km · " + fmt(s.perKm) + "/km" : "") + "</div>" +
+      (w.length ? '<div class="exp" style="font-size:13px">' + esc(w[0]) + (w.length > 1 ? " 等 " + w.length + " 项" : "") + "</div>" : "") +
+      "</div><span class=\"mute\">›</span></div>";
+  });
+  return h + '<button class="btn" id="carnew" style="margin-top:12px">＋ 添加车辆</button></div>';
+}
+// ---------- AA 分账（我先垫付，朋友之后还）----------
+// t.sp = { n: 几个人, mine: 我的那份(可不填=平均), who: 谁欠我, pays: [{amt, acc, date}] }
+function spMineOf(am, sp) {
+  var m = parseFloat(sp.mine);
+  return m >= 0 ? m : (parseFloat(am) || 0) / Math.max(2, parseInt(sp.n) || 2);
+}
+function spBack(t) {
+  var v = 0;
+  ((t.sp && t.sp.pays) || []).forEach(function (p) {
+    v += +p.amt || 0;
+  });
+  return v;
+}
+function spOwed(t) {
+  return t.sp ? Math.max(0, t.amt - spMineOf(t.amt, t.sp)) : 0;
+}
+// 扣掉朋友已经还我的钱之后，这一笔真正算我的支出
+function spNet(t) {
+  return Math.max(0, t.amt - spBack(t));
+}
+function spInfo(am, mine, back, cu) {
+  if (!(am > 0)) return "";
+  return (
+    "朋友共欠 " + fmt(Math.max(0, am - mine), cu) +
+    (back ? "，已收 " + fmt(back, cu) + "，还欠 " + fmt(Math.max(0, am - mine - back), cu) : "") +
+    "。我的支出现在是 " + fmt(Math.max(0, am - back), cu) + "，朋友还清后会变成 " + fmt(mine, cu)
+  );
+}
+function spPaySheet(t, left, cb) {
+  var cu = (acc(t.acc) || {}).cur || "MYR",
+    m = openSheet(
+      "<b>💸 收到朋友还款</b><label>金额（" + cu + '）</label><input id="pa" type="number" inputmode="decimal" step="0.01" value="' +
+        (left > 0 ? left.toFixed(2) : "") + '"><label>收进哪个账户</label><select id="pc">' +
+        S.accounts
+          .filter(function (a) { return !a.hide; })
+          .map(function (a) { return '<option value="' + a.id + '"' + (a.id === t.acc ? " selected" : "") + ">" + esc(a.name) + " (" + a.cur + ")</option>"; })
+          .join("") +
+        '</select><label>日期</label><input id="pd" type="date" value="' + today() + '"><button class="btn" id="ok">确定</button>',
+    );
+  m.querySelector("#ok").onclick = function () {
+    var v = parseFloat(m.querySelector("#pa").value),
+      p = { amt: +v.toFixed(2), acc: m.querySelector("#pc").value, date: m.querySelector("#pd").value || today() };
+    if (!(v > 0)) return toast("请填还款金额");
+    m.remove();
+    cb(p);
+  };
+}
 function cvt(x, t) {
+  var f = t.sp && x === t.amt && t.amt > 0 ? spNet(t) / t.amt : 1;
   // 手动填了实际 MYR 金额的外币记录，直接用它
-  if (t.myr > 0 && x === t.amt && t.type !== "transfer") return conv(+t.myr, "MYR", S.base);
+  if (t.myr > 0 && x === t.amt && t.type !== "transfer") return conv(+t.myr, "MYR", S.base) * f;
   var a = acc(t.acc);
-  return conv(x, a ? a.cur : t.cur || "MYR", S.base);
+  return conv(x, a ? a.cur : t.cur || "MYR", S.base) * f;
 }
 function sums(list) {
   var i = 0,
@@ -399,6 +770,12 @@ function txRow(t) {
     sign = t.type === "income" ? "+" : "-";
   }
   if (t.note) sub += "　" + esc(t.note);
+  if (t.sp) {
+    var sb = spBack(t),
+      sw = spOwed(t) - sb;
+    sub += " · 👥 垫付 " + fmt(t.amt, a.cur) + (sb ? "，已收 " + fmt(sb, a.cur) : "") + (sw > 0.005 ? "，待收 " + fmt(sw, a.cur) : " ✓");
+  }
+  if (t.odo || t.lit) sub += " · ⛽ " + (t.lit ? t.lit + " L" : "") + (t.lit && t.odo ? " · " : "") + (t.odo ? t.odo + " km" : "");
   if (t.by)
     sub +=
       " · " +
@@ -411,12 +788,14 @@ function txRow(t) {
     fx =
       '<div class="mute" style="font-size:11px;font-weight:400;text-align:right">' +
       (t.myr > 0 ? "= " : "≈ ") +
-      fmt(t.myr > 0 ? t.myr : t.amt * S.rates[a.cur], "MYR") +
+      fmt(t.myr > 0 ? t.myr * (t.sp && t.amt ? spNet(t) / t.amt : 1) : (t.sp ? spNet(t) : t.amt) * S.rates[a.cur], "MYR") +
       "</div>";
   return (
     '<div class="item row" data-tx="' +
     t.id +
-    '" style="cursor:pointer"><div class="ico">' +
+    '" style="cursor:pointer">' +
+    (selMode && tab === "bills" ? '<span style="font-size:18px">' + (sel[t.id] ? "☑️" : "⬜") + "</span>" : "") +
+    '<div class="ico">' +
     (t.type === "transfer" ? "⇄" : txi(t)) +
     '</div><div class="sp"><div class="ellip">' +
     title +
@@ -426,7 +805,7 @@ function txRow(t) {
     cls +
     '">' +
     sign +
-    fmt(t.amt, a.cur).replace("-", "") +
+    fmt(t.sp ? spNet(t) : t.amt, a.cur).replace("-", "") +
     fx +
     "</div></div>"
   );
@@ -456,6 +835,457 @@ function periodCard() {
       .join("") +
     "</div></div>"
   );
+}
+function defAcc() {
+  if (S.trip) {
+    var ta = S.accounts.find(function (x) {
+      return x.cur === S.trip.cur && !x.hide;
+    });
+    if (ta) return ta.id;
+  }
+  return S.accounts[0] && S.accounts[0].id;
+}
+// ---------- 快速记账 ----------
+function plusMenu() {
+  if (RO) return;
+  var m = openSheet(
+    '<b>记一笔</b><div class="row" style="margin-top:12px;gap:10px"><button class="btn" id="pq" style="margin-top:0">⚡ 快速记账</button><button class="btn" id="pf" style="margin-top:0;background:var(--accbg);color:var(--acc);box-shadow:none">✍️ 完整记账</button></div>',
+  );
+  m.querySelector("#pq").onclick = function () {
+    m.remove();
+    quickSheet();
+  };
+  m.querySelector("#pf").onclick = function () {
+    m.remove();
+    txSheet();
+  };
+}
+function quickAdd(f) {
+  var a = acc(f.acc) ? f.acc : defAcc(),
+    pre = { type: f.type, amt: f.amt > 0 ? String(f.amt) : "", acc: a, to: "", cat: f.cat, sub: f.sub, note: f.note || "", date: today(), fee: "" };
+  if (!(f.amt > 0) || cur === "joint") {
+    txSheet(null, pre);
+    return;
+  }
+  mark();
+  S.tx.push({
+    id: uid(), ts: Date.now(), type: f.type, amt: +f.amt, acc: a, date: today(), note: f.note || "", cat: f.cat,
+    sub: ((S.sub || {})[f.cat] || []).indexOf(f.sub) >= 0 ? f.sub : undefined,
+    trip: S.trip ? S.trip.name : undefined,
+  });
+  save();
+  render();
+  showUndo("已记：" + (f.name || f.cat) + " " + fmt(f.amt, (acc(a) || {}).cur));
+}
+function quickSheet() {
+  var m = openSheet(""),
+    sh = m.querySelector(".sheet");
+  function draw() {
+    var f = S.fav || [],
+      last = S.tx
+        .filter(function (t) {
+          return t.type !== "transfer";
+        })
+        .sort(function (a, b) {
+          return (b.ts || 0) - (a.ts || 0);
+        })[0];
+    sh.innerHTML =
+      '<button class="chip" data-close="1" style="margin-bottom:10px">‹ 返回</button><b>⚡ 快速记账</b><div class="mute" style="margin:4px 0 10px">' +
+      (qManage ? "点模板可修改或删除" : "点一下就记好（记在今天，用模板里的账户和金额）") +
+      '</div><div class="chips" style="gap:8px">' +
+      f
+        .map(function (x, i) {
+          return (
+            '<button class="chip' + (qManage ? "" : " on") + '" data-qi="' + i + '" style="padding:10px 14px;font-size:14px;text-align:left">' +
+            ci(x.cat) + " " + esc(x.name) + '<br><span class="num">' +
+            (x.amt > 0 ? fmt(x.amt, (acc(x.acc) || {}).cur) : "输入金额") + "</span></button>"
+          );
+        })
+        .join("") +
+      '<button class="chip" data-qn="1" style="padding:10px 14px;border-style:dashed">＋ 新模板</button></div>' +
+      (last
+        ? '<button class="btn" data-ql="1" style="background:var(--accbg);color:var(--acc);box-shadow:none">🔁 复制上一笔：' +
+          esc(last.note || last.cat) + " " + fmt(last.amt, (acc(last.acc) || {}).cur) + "</button>"
+        : "") +
+      '<button class="btn ghost" data-qm="1" style="color:var(--mute)">' + (qManage ? "完成管理" : "管理模板") +
+      '</button><button class="btn ghost" data-qf="1" style="color:var(--acc)">✍️ 改用完整记账</button>';
+  }
+  draw();
+  sh.addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (!b) return;
+    var d = b.dataset;
+    if (d.qi !== undefined) {
+      var i = +d.qi;
+      m.remove();
+      if (qManage) tplSheet(i);
+      else quickAdd(S.fav[i]);
+    } else if (d.qn) {
+      m.remove();
+      tplSheet(-1);
+    } else if (d.ql) {
+      var l = S.tx
+        .filter(function (t) {
+          return t.type !== "transfer";
+        })
+        .sort(function (a, b) {
+          return (b.ts || 0) - (a.ts || 0);
+        })[0];
+      m.remove();
+      if (l) quickAdd({ name: l.note || l.cat, type: l.type, amt: l.amt, acc: l.acc, cat: l.cat, sub: l.sub, note: l.note });
+    } else if (d.qm) {
+      qManage = !qManage;
+      draw();
+    } else if (d.qf) {
+      m.remove();
+      txSheet();
+    }
+  });
+}
+function tplSheet(i) {
+  var f = i >= 0 ? S.fav[i] : { name: "", type: "expense", amt: "", acc: defAcc(), cat: S.cats.expense[0], sub: "", note: "" };
+  var m = openSheet(
+    "<b>" + (i >= 0 ? "修改模板" : "新快速模板") + '</b><label>名称</label><input id="tn" value="' + esc(f.name) +
+      '" placeholder="例如：U Mobile 充值"><label>类型</label><select id="tt"><option value="expense">支出</option><option value="income">收入</option></select><label>金额（留空 = 每次自己输入）</label><input id="ta" type="number" inputmode="decimal" step="0.01" value="' +
+      (f.amt || "") + '"><label>账户</label><select id="tac">' +
+      S.accounts
+        .filter(function (a) {
+          return !a.hide;
+        })
+        .map(function (a) {
+          return '<option value="' + a.id + '">' + esc(a.name) + " (" + a.cur + ")</option>";
+        })
+        .join("") +
+      '</select><label>分类</label><select id="tcg"></select><label>细分（选填）</label><select id="ts"></select><button class="btn" id="ok">保存</button>' +
+      (i >= 0 ? '<button class="btn ghost" id="del">删除模板</button>' : ""),
+  );
+  var q = function (x) {
+    return m.querySelector(x);
+  };
+  function cats(keepCat) {
+    var ty = q("#tt").value;
+    q("#tcg").innerHTML = S.cats[ty]
+      .map(function (c) {
+        return '<option value="' + esc(c) + '">' + esc(c) + "</option>";
+      })
+      .join("");
+    if (keepCat) q("#tcg").value = keepCat;
+    subs(f.sub);
+  }
+  function subs(keep) {
+    var ss = (S.sub || {})[q("#tcg").value] || [];
+    q("#ts").innerHTML =
+      '<option value="">不选</option>' +
+      ss
+        .map(function (x) {
+          return '<option value="' + esc(x) + '">' + esc(x) + "</option>";
+        })
+        .join("");
+    if (keep) q("#ts").value = keep;
+  }
+  q("#tt").value = f.type;
+  q("#tac").value = acc(f.acc) ? f.acc : defAcc();
+  cats(f.cat);
+  q("#tt").onchange = function () {
+    cats();
+  };
+  q("#tcg").onchange = function () {
+    subs();
+  };
+  q("#ok").onclick = function () {
+    var o = {
+      name: q("#tn").value.trim() || q("#tcg").value,
+      type: q("#tt").value,
+      amt: parseFloat(q("#ta").value) > 0 ? parseFloat(q("#ta").value) : undefined,
+      acc: q("#tac").value,
+      cat: q("#tcg").value,
+      sub: q("#ts").value || undefined,
+      note: f.note || "",
+    };
+    mark();
+    if (i >= 0) S.fav[i] = Object.assign(S.fav[i], o);
+    else S.fav.push(o);
+    save();
+    m.remove();
+    render();
+    quickSheet();
+  };
+  var dd = q("#del");
+  if (dd)
+    dd.onclick = function () {
+      mark();
+      S.fav.splice(i, 1);
+      save();
+      m.remove();
+      render();
+      quickSheet();
+    };
+}
+// ---------- 旅行模式 ----------
+function tripTotal(name) {
+  var v = 0;
+  S.tx.forEach(function (t) {
+    if (t.trip === name && t.type === "expense") v += cvt(t.amt, t);
+  });
+  return v;
+}
+function tripCard() {
+  if (cur === "other") return "";
+  var h = '<div class="card"><b>✈️ 旅行模式</b>';
+  if (S.trip)
+    h +=
+      '<div class="mute">旅行中：<b>' + esc(S.trip.name) + "</b>。记账默认用 " + S.trip.cur +
+      ' 账户，并自动标记这一趟</div><div class="num" style="font-size:22px;margin:8px 0">已花 ' + fmt(tripTotal(S.trip.name)) +
+      '</div><button class="btn ghost" id="tripend">结束旅行</button>';
+  else
+    h +=
+      '<div class="mute">开启后记账默认用外币账户，并把这一趟花的钱单独统计</div><label>名称</label><input id="trn" placeholder="例如：新加坡 11 月"><label>当地币种</label><select id="trc">' +
+      CURS.map(function (c) {
+        return "<option>" + c + "</option>";
+      }).join("") +
+      '</select><button class="btn" id="tripgo">开始旅行</button>';
+  var tr = {};
+  S.tx.forEach(function (t) {
+    if (t.trip && (!S.trip || t.trip !== S.trip.name)) {
+      var o = (tr[t.trip] = tr[t.trip] || { n: 0, last: "" });
+      o.n++;
+      if (t.date > o.last) o.last = t.date;
+    }
+  });
+  var names = Object.keys(tr).sort(function (a, b) {
+    return tr[b].last.localeCompare(tr[a].last);
+  });
+  if (names.length)
+    h +=
+      '<div class="mute" style="margin-top:12px">以前的旅行</div>' +
+      names
+        .map(function (n) {
+          return (
+            '<div class="item row"><span class="sp">' + esc(n) + '<div class="mute">' + tr[n].n + " 笔 · " + tr[n].last +
+            '</div></span><span class="num">' + fmt(tripTotal(n)) + "</span></div>"
+          );
+        })
+        .join("");
+  return h + "</div>";
+}
+// ---------- 导入银行 / TNG CSV ----------
+function p2(n) {
+  return String(n).padStart(2, "0");
+}
+function parseCSV(t) {
+  var rows = [], r = [], f = "", q = false;
+  t = t.replace(/^\uFEFF/, "");
+  for (var i = 0; i < t.length; i++) {
+    var c = t[i];
+    if (q) {
+      if (c === '"') {
+        if (t[i + 1] === '"') {
+          f += '"';
+          i++;
+        } else q = false;
+      } else f += c;
+    } else if (c === '"') q = true;
+    else if (c === ",") {
+      r.push(f);
+      f = "";
+    } else if (c === "\n") {
+      r.push(f);
+      rows.push(r);
+      r = [];
+      f = "";
+    } else if (c !== "\r") f += c;
+  }
+  if (f || r.length) {
+    r.push(f);
+    rows.push(r);
+  }
+  return rows.filter(function (x) {
+    return x.some(function (y) {
+      return y.trim();
+    });
+  });
+}
+function pdate(s) {
+  s = String(s).trim();
+  var m, y, mo, d;
+  if ((m = s.match(/(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/))) {
+    y = +m[1]; mo = +m[2]; d = +m[3];
+  } else if ((m = s.match(/(\d{1,2})[-\/. ](\d{1,2})[-\/. ](\d{4})/))) {
+    d = +m[1]; mo = +m[2]; y = +m[3];
+  } else if ((m = s.match(/(\d{1,2})[-\/ ]([A-Za-z]{3})[a-z]*[-\/ ,]*(\d{2,4})/))) {
+    var ix = "janfebmaraprmayjunjulaugsepoctnovdec".indexOf(m[2].toLowerCase());
+    if (ix < 0 || ix % 3) return null;
+    d = +m[1]; mo = ix / 3 + 1; y = m[3].length === 2 ? 2000 + +m[3] : +m[3];
+  } else return null;
+  var t = new Date(y, mo - 1, d);
+  if (t.getFullYear() !== y || t.getMonth() !== mo - 1 || t.getDate() !== d) return null;
+  return y + "-" + p2(mo) + "-" + p2(d);
+}
+function pnum(s) {
+  s = String(s == null ? "" : s);
+  var neg = /\(.*\)|\bDR\b|^\s*-/i.test(s),
+    v = parseFloat(s.replace(/[^\d.]/g, ""));
+  if (isNaN(v)) return null;
+  return neg ? -v : v;
+}
+var CATRULES = [
+  [/foodpanda|grabfood|shopeefood/i, "外卖"],
+  [/starbucks|\bzus\b|tealive|chagee|gong ?cha|luckin|kenangan/i, "咖啡饮料"],
+  [/aeon|lotus|tesco|giant|99 ?speedmart|mydin|jaya grocer|\bnsk\b|econsave|7-?eleven|kk ?mart|pasar/i, "超市杂货"],
+  [/netflix|spotify|youtube ?premium|disney|icloud|google ?one|chatgpt|openai|anthropic|apple\.com|canva|microsoft ?365/i, "订阅会员"],
+  [/\baia\b|great eastern|prudential|allianz|takaful|insurance|insurans/i, "保险"],
+  [/uniqlo|h&m|zara|padini|nike|adidas/i, "衣服鞋包"],
+  [/samsung|xiaomi|huawei|apple store/i, "手机数码"],
+  [/salon|barber|sephora|spa\b/i, "美容美发"],
+  [/anytime fitness|celebrity fit|decathlon|\bgym\b/i, "运动健身"],
+  [/\bpet\b|veterinar|\bvet\b/i, "宠物"],
+  [/car ?wash|road ?tax|tyre|tire|workshop|saman|jpj/i, "汽车"],
+  [/lhdn|hasil|cukai|pdrm/i, "税费罚款"],
+  [/ikea|furniture|hardware|repair/i, "家居维修"],
+  [/petronas|shell|petron|caltex|bhp|setel/i, "油费"],
+  [/\btoll\b|smartag|lebuhraya|plus ?malaysia/i, "过路费"],
+  [/grab(?!food)|gojek|\blrt\b|\bmrt\b|rapid ?kl|\bktm\b|parking|touch ?n ?go go|mycar/i, "交通"],
+  [/u ?mobile|umobile|hotlink|maxis|celcom|\bdigi\b|celcomdigi|yoodo|tune ?talk|redone|\bxox\b|buzzme|speakout|reload|top ?-?up|prepaid/i, "话费充值"],
+  [/\btnb\b|tenaga|syabas|air selangor|indah water|unifi|time dotcom|streamyx|astro|wifi/i, "水电网络"],
+  [/netflix|spotify|disney|youtube|\btgv\b|\bgsc\b|cinema|steam|playstation/i, "娱乐"],
+  [/clinic|klinik|pharmacy|guardian|watsons|hospital|caring/i, "医疗"],
+  [/shopee|lazada|zalora|uniqlo|mr\.? ?diy|mydin|aeon|tesco|lotus|99 ?speedmart|ikea|giant|econsave|jaya grocer|7-?eleven|kk ?mart|amazon|taobao|temu/i, "购物"],
+  [/mcd|mcdonald|kfc|starbucks|\bzus\b|tealive|foodpanda|grabfood|restoran|restaurant|cafe|kopitiam|nasi|mamak|pizza|sushi|bakery|burger|coffee|domino|subway|warung|chagee|luckin/i, "餐饮"],
+  [/\brent\b|sewa/i, "房租"],
+];
+function guessCat(text, type) {
+  var list = S.cats[type] || [],
+    last = list[list.length - 1] || "其他";
+  if (type === "income") return /salary|gaji|payroll|bonus/i.test(text) && list.indexOf("工资") >= 0 ? "工资" : last;
+  for (var i = 0; i < CATRULES.length; i++) if (CATRULES[i][0].test(text) && list.indexOf(CATRULES[i][1]) >= 0) return CATRULES[i][1];
+  return list.indexOf("其他") >= 0 ? "其他" : last;
+}
+function csvToTx(text, mode) {
+  var rows = parseCSV(text), hi = -1, low = [];
+  for (var i = 0; i < Math.min(rows.length, 20) && hi < 0; i++) {
+    low = rows[i].map(function (x) {
+      return x.trim().toLowerCase();
+    });
+    if (
+      low.some(function (x) { return /date|日期|时间|time/.test(x); }) &&
+      low.some(function (x) { return /amount|金额|^amt|debit|credit|withdraw|deposit|支出|收入/.test(x); })
+    )
+      hi = i;
+  }
+  if (hi < 0) return { items: [], err: "认不出表头：文件里需要有「日期」和「金额」两列" };
+  function fi(re) {
+    return low.findIndex(function (x) {
+      return re.test(x) && !/balance|余额/.test(x);
+    });
+  }
+  var H = {
+    d: fi(/date|日期|时间|time/),
+    a: fi(/amount|金额|^amt/),
+    db: fi(/debit|withdraw|支出|借方/),
+    cr: fi(/credit|deposit|收入|贷方/),
+    n: -1,
+  };
+  ["description", "details", "detail", "merchant", "reference", "narrat", "remark", "说明", "备注", "摘要", "商家", "对方", "交易"].some(function (k) {
+    H.n = fi(new RegExp(k));
+    return H.n >= 0;
+  });
+  var items = [];
+  rows.slice(hi + 1).forEach(function (r) {
+    var d = pdate(r[H.d] || "");
+    if (!d) return;
+    var v = H.a >= 0 ? pnum(r[H.a]) : null, type;
+    if (v !== null && v !== 0) type = mode === "exp" || v < 0 ? "expense" : "income";
+    else {
+      var db = H.db >= 0 ? pnum(r[H.db]) : null,
+        cr = H.cr >= 0 ? pnum(r[H.cr]) : null;
+      if (db) { v = db; type = "expense"; }
+      else if (cr) { v = cr; type = "income"; }
+      else return;
+    }
+    var note = String(r[H.n] || "").trim().replace(/\s+/g, " ").slice(0, 40),
+      cat = guessCat(r.join(" "), type),
+      sub;
+    if (cat === "话费充值")
+      sub = ((S.sub || {})["话费充值"] || []).find(function (x) {
+        return r.join(" ").replace(/\s/g, "").toLowerCase().indexOf(x.replace(/\s/g, "").toLowerCase()) >= 0;
+      });
+    items.push({ type: type, amt: +Math.abs(v).toFixed(2), date: d, note: note, cat: cat, sub: sub });
+  });
+  return { items: items, err: items.length ? "" : "没有读到可导入的记录" };
+}
+function importSheet() {
+  if (cur !== "mine") {
+    toast("请先切换到「我的账本」再导入");
+    return;
+  }
+  var m = openSheet(
+    '<b>导入银行 / TNG 账单（CSV）</b><div class="mute" style="margin:4px 0">支持 Maybank、TNG eWallet 等导出的 CSV：自动认日期、金额、分类，导入前可预览</div><label>导入到哪个账户</label><select id="ia">' +
+      S.accounts
+        .filter(function (a) { return !a.hide; })
+        .map(function (a) { return '<option value="' + a.id + '">' + esc(a.name) + " (" + a.cur + ")</option>"; })
+        .join("") +
+      '</select><label>金额正负</label><select id="im"><option value="auto">负数 = 支出，正数 = 收入</option><option value="exp">全部当支出</option></select><label>选择 CSV 文件</label><input id="if" type="file" accept=".csv,text/csv,text/plain"><label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="isk" checked style="width:auto"> 跳过疑似重复（同一天、同金额、同账户）</label><div id="ip" class="mute" style="margin-top:10px"></div><button class="btn" id="ig" style="display:none">导入</button>',
+  );
+  var q = function (x) { return m.querySelector(x); }, text = "", todo = [];
+  function parse() {
+    if (!text) return;
+    var r = csvToTx(text, q("#im").value), a = q("#ia").value, seen = {}, dup = 0;
+    S.tx.forEach(function (t) { seen[t.date + "|" + t.type + "|" + (+t.amt).toFixed(2) + "|" + t.acc] = 1; });
+    todo = r.items.filter(function (x) {
+      var k = x.date + "|" + x.type + "|" + x.amt.toFixed(2) + "|" + a;
+      if (q("#isk").checked && seen[k]) { dup++; return false; }
+      return true;
+    });
+    q("#ip").innerHTML = r.err
+      ? esc(r.err)
+      : "找到 " + r.items.length + " 笔，" + (dup ? dup + " 笔疑似重复已跳过，" : "") + "将导入 <b>" + todo.length + "</b> 笔<br>" +
+        todo.slice(0, 5).map(function (x) {
+          return esc(x.date + " " + (x.note || "-") + " " + (x.type === "income" ? "+" : "-") + x.amt + " → " + x.cat);
+        }).join("<br>") + (todo.length > 5 ? "<br>…" : "");
+    q("#ig").style.display = todo.length ? "" : "none";
+    q("#ig").textContent = "导入 " + todo.length + " 笔";
+  }
+  q("#if").onchange = function () {
+    var f = this.files[0];
+    if (!f) return;
+    var rd = new FileReader();
+    rd.onload = function () { text = String(rd.result); parse(); };
+    rd.readAsText(f);
+  };
+  q("#im").onchange = q("#ia").onchange = q("#isk").onchange = parse;
+  q("#ig").onclick = function () {
+    var a = q("#ia").value, n = todo.length;
+    mark();
+    todo.forEach(function (x, i) {
+      S.tx.push({ id: uid(), ts: Date.now() + i, type: x.type, amt: x.amt, acc: a, date: x.date, note: x.note, cat: x.cat, sub: x.sub });
+    });
+    save();
+    m.remove();
+    render();
+    showUndo("已导入 " + n + " 笔");
+  };
+}
+// ---------- PIN（哈希保存） ----------
+async function pinHash(p) {
+  var b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("ledger-pin-v1:" + p));
+  return "h1:" + Array.prototype.map.call(new Uint8Array(b), function (x) { return ("0" + x.toString(16)).slice(-2); }).join("");
+}
+// ---------- 照片导出 / 导入 ----------
+function imgAll() {
+  return idb().then(function (d) {
+    if (!d) return null;
+    return new Promise(function (ok) {
+      var o = {};
+      try {
+        var q = d.transaction("img", "readonly").objectStore("img").openCursor();
+        q.onsuccess = function () {
+          var c = q.result;
+          if (c) { o[c.key] = c.value; c["continue"](); } else ok(o);
+        };
+        q.onerror = function () { ok(null); };
+      } catch (e) { ok(null); }
+    });
+  });
 }
 function expIn(a, b) {
   var v = 0;
@@ -613,6 +1443,13 @@ function bills() {
       })
       .join("") +
     '</select><select id="fc" style="margin-top:8px">' + fOpts() + "</select>" +
+    (RO
+      ? ""
+      : '<div class="row" style="margin-top:8px;gap:8px"><button class="chip' + (selMode ? " on" : "") + '" id="selbtn">' +
+        (selMode ? "完成" : "☑️ 选择") + "</button>" +
+        (selMode
+          ? '<span class="mute sp">已选 ' + Object.keys(sel).length + ' 笔</span><button class="chip" id="selcat">改分类</button><button class="chip" id="seldel" style="color:var(--exp)">删除</button>'
+          : "") + "</div>") +
     '<div class="card row"><div class="sp"><div class="mute">收入</div><div class="num inc">' +
     fmt(s.i) +
     '</div></div><div class="sp"><div class="mute">支出</div><div class="num exp">' +
@@ -910,11 +1747,38 @@ function stats() {
     rows.forEach(function (x) {
       mx = Math.max(mx, x[2]);
     });
+    var trend = "";
+    if (statMode === "year" && tot > 0) {
+      var tv = rows.map(function (x, i) {
+          if (!trendCat) return x[2];
+          var s2 = 0;
+          list.forEach(function (t) {
+            if (t.type === "expense" && t.cat === trendCat && String(t.date).slice(5, 7) === p2(i + 1)) s2 += cvt(t.amt, t);
+          });
+          return s2;
+        }),
+        tmx = Math.max.apply(null, tv.concat(1)),
+        pts = tv.map(function (v, i) {
+          return [10 + (i * 280) / 11, 70 - (v / tmx) * 56];
+        });
+      trend =
+        '<select id="tcat" style="margin-top:8px"><option value="">趋势：全部分类</option>' +
+        keys
+          .filter(function (k) { return by[k] > 0; })
+          .map(function (k) { return '<option value="' + esc(k) + '"' + (k === trendCat ? " selected" : "") + ">趋势：" + esc(k) + "</option>"; })
+          .join("") +
+        '</select><svg viewBox="0 0 300 92" style="width:100%;margin:6px 0"><polyline fill="none" stroke="var(--acc)" stroke-width="2.5" stroke-linejoin="round" points="' +
+        pts.map(function (p) { return p[0].toFixed(1) + "," + p[1].toFixed(1); }).join(" ") + '"/>' +
+        pts.map(function (p, i) {
+          return '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="3" fill="var(--acc)"/><text x="' + p[0].toFixed(1) + '" y="88" font-size="8" text-anchor="middle" fill="var(--mute)">' + (i + 1) + "</text>";
+        }).join("") + "</svg>";
+    }
     if (rows.length)
       h +=
         '<div class="card"><b>' +
         title +
         "</b>" +
+        trend +
         rows
           .map(function (x) {
             return (
@@ -1013,8 +1877,10 @@ function settings() {
   });
   return (
     h +
+    tripCard() +
+    carCard() +
     more() +
-    '<div class="card"><b>备份</b><div class="mute">数据只存在这个浏览器里，建议定期导出备份。</div><div class="row" style="margin-top:8px"><button class="chip" data-bk="out">导出</button><button class="chip" data-bk="in">导入</button><button class="chip" data-bk="csv">导出 CSV</button>' +
+    '<div class="card"><b>备份</b><div class="mute">数据只存在这个浏览器里，建议定期导出备份。</div><div class="row" style="margin-top:8px"><button class="chip" data-bk="out">导出</button><button class="chip" data-bk="in">导入</button><button class="chip" data-bk="csv">导出 CSV</button><button class="chip" data-bk="imp">导入银行账单</button><button class="chip" data-bk="pho_out">导出照片</button><button class="chip" data-bk="pho_in">导入照片</button>' +
     (localStorage.getItem("ledger.bak")
       ? '<button class="chip" data-bk="rst">恢复被覆盖的数据</button>'
       : "") +
@@ -1022,6 +1888,45 @@ function settings() {
   );
 }
 function backup(k) {
+  if (k === "imp") {
+    importSheet();
+    return;
+  }
+  if (k === "pho_out") {
+    imgAll().then(async function (o) {
+      var n = o ? Object.keys(o).length : 0;
+      if (!n) return toast("没有照片可以导出");
+      try {
+        var dl2 = await claude.use("downloads");
+        await dl2.save({ filename: "ledger-photos.json", data: new Blob([JSON.stringify(o)], { type: "application/json" }) });
+        toast("已导出 " + n + " 张照片");
+      } catch (e) {
+        toast("导出失败");
+      }
+    });
+    return;
+  }
+  if (k === "pho_in") {
+    var inp = document.createElement("input");
+    inp.type = "file";
+    inp.accept = ".json,application/json";
+    inp.onchange = function () {
+      var rd = new FileReader();
+      rd.onload = async function () {
+        try {
+          var o = JSON.parse(rd.result), n = 0;
+          for (var id in o) if (typeof o[id] === "string" && o[id].indexOf("data:") === 0 && (await imgPut(id, o[id]))) n++;
+          toast("已导入 " + n + " 张照片");
+          render();
+        } catch (e) {
+          toast("照片文件无法识别");
+        }
+      };
+      rd.readAsText(inp.files[0]);
+    };
+    inp.click();
+    return;
+  }
   if (k === "csv") {
     csvSheet();
     return;
@@ -1263,6 +2168,33 @@ function alerts() {
   monthTx(mk(td)).forEach(function (t) {
     if (t.type === "expense") by[t.cat] = (by[t.cat] || 0) + cvt(t.amt, t);
   });
+  if (S.trip)
+    h +=
+      '<div class="item row"><div class="ico">✈️</div><div class="sp">旅行中：' + esc(S.trip.name) +
+      '<div class="mute">已花 ' + fmt(tripTotal(S.trip.name)) + "</div></div></div>";
+  if (!RO && cur === "mine")
+    S.cars.forEach(function (c) {
+      (c.items || []).forEach(function (it) {
+        svcStatus(c, it).forEach(function (x) {
+          if (x.warn)
+            h +=
+              '<div class="item row" data-car="' + c.id + '" style="cursor:pointer"><div class="ico">' + (x.over ? "🚨" : "🔧") + '</div><div class="sp">' +
+              esc(c.name) + " · " + esc(it.name) + '<div class="mute">' + x.txt + "</div></div></div>";
+        });
+      });
+    });
+  if (!RO) {
+    var pend = S.tx.filter(function (t) {
+      return t.sp && spOwed(t) - spBack(t) > 0.005;
+    });
+    pend.slice(0, 5).forEach(function (t) {
+      h +=
+        '<div class="item row"><div class="ico">👥</div><div class="sp">' + esc(t.sp.who || "朋友") + " 还欠你 " +
+        fmt(spOwed(t) - spBack(t), (acc(t.acc) || {}).cur) + '<div class="mute">' + esc(t.cat + (t.note ? " · " + t.note : "")) + " · " + t.date +
+        '</div></div><button class="chip on" data-sprecv="' + t.id + '">收款</button></div>';
+    });
+    if (pend.length > 5) h += '<div class="mute" style="padding:4px 0">还有 ' + (pend.length - 5) + " 笔待收款，在账单里点开可查看</div>";
+  }
   var tb = S.tbud,
     tm = 0;
   Object.keys(by).forEach(function (k) {
@@ -1483,10 +2415,11 @@ function act(a, i) {
     if (f && S.accounts.length)
       txSheet(null, {
         type: f.type,
-        amt: String(f.amt),
+        amt: f.amt > 0 ? String(f.amt) : "",
         acc: acc(f.acc) ? f.acc : S.accounts[0].id,
         to: "",
         cat: f.cat,
+        sub: f.sub,
         note: f.note || "",
         date: today(),
         fee: "",
@@ -1625,9 +2558,19 @@ function lock() {
   drawIcon(d.querySelector("#lg"));
   var i = d.querySelector("#lp");
   i.focus();
-  i.oninput = function () {
-    if (i.value === S.pin) d.remove();
-    else if (i.value.length >= S.pin.length) {
+  i.oninput = async function () {
+    var v = i.value,
+      hashed = S.pin.indexOf("h1:") === 0,
+      okp = hashed ? (await pinHash(v)) === S.pin : v === S.pin;
+    if (okp) {
+      if (!hashed) {
+        // 旧版明文 PIN：解锁成功后顺便改成哈希保存
+        S.pin = await pinHash(v);
+        S.pinLen = v.length;
+        save();
+      }
+      d.remove();
+    } else if (v.length >= (hashed ? S.pinLen || 6 : S.pin.length)) {
       d.querySelector("#le").textContent = "PIN 不对";
       i.value = "";
     }
@@ -1659,6 +2602,24 @@ var CI = {
   理财: "📈",
   红包: "🧧",
   兼职: "💼",
+  话费充值: "📶",
+  外卖: "🛵",
+  咖啡饮料: "☕",
+  超市杂货: "🛒",
+  日用品: "🧴",
+  订阅会员: "🔁",
+  衣服鞋包: "👕",
+  手机数码: "📱",
+  美容美发: "💇",
+  运动健身: "🏋️",
+  宠物: "🐾",
+  汽车: "🚗",
+  保险: "🛡️",
+  礼物红包: "🎁",
+  孩子: "🧸",
+  家居维修: "🔧",
+  税费罚款: "🧾",
+  慈善捐款: "🤝",
 };
 var EM = [
   "🍜",
@@ -1879,6 +2840,56 @@ var BR = [
   ["buzzme", "#6C2BD9", "Bz"],
   ["speakout", "#F7941D", "SO"],
   ["singtel", "#E60012", "St"],
+  ["starbucks", "#00704A", "SB"],
+  ["zus", "#14284B", "ZUS"],
+  ["tealive", "#D7263D", "TL"],
+  ["chagee", "#1B4D3E", "霸"],
+  ["gong cha,gongcha", "#B3001B", "GC"],
+  ["luckin", "#0A3D91", "LK"],
+  ["kenangan", "#B8860B", "KN"],
+  ["mcd,mcdonald", "#FFC72C", "M", "#DA291C"],
+  ["kfc", "#E4002B", "KFC"],
+  ["pizza hut", "#EE3124", "PH"],
+  ["domino", "#006491", "Dom"],
+  ["subway", "#009A44", "Sub"],
+  ["7-eleven,7eleven,7 eleven", "#00833E", "7"],
+  ["kk mart", "#E4002B", "KK"],
+  ["aeon", "#C2185B", "AEON"],
+  ["lotus,tesco", "#E31837", "Lotus"],
+  ["giant", "#D4001A", "G"],
+  ["99 speedmart,99speedmart", "#FFD100", "99", "#222"],
+  ["mydin", "#F58220", "Myd"],
+  ["jaya grocer", "#0B6B3A", "JG"],
+  ["nsk", "#E2231A", "NSK"],
+  ["econsave", "#E31837", "Eco"],
+  ["watsons", "#00A19B", "W"],
+  ["guardian", "#00843D", "Gd"],
+  ["mr diy,mrdiy", "#FFC72C", "DIY", "#C8102E"],
+  ["ikea", "#0058A3", "IKEA", "#FFDA1A"],
+  ["zalora", "#111111", "Z"],
+  ["uniqlo", "#E4002B", "UQ"],
+  ["h&m", "#E50010", "H&M"],
+  ["zara", "#111111", "ZARA"],
+  ["padini", "#111111", "PD"],
+  ["nike", "#111111", "Nike"],
+  ["adidas", "#111111", "ad"],
+  ["decathlon", "#0082C3", "Dec"],
+  ["samsung", "#1428A0", "SS"],
+  ["xiaomi", "#FF6900", "Mi"],
+  ["huawei", "#CF0A2C", "Hw"],
+  ["tgv", "#E4002B", "TGV"],
+  ["gsc", "#ED1C24", "GSC"],
+  ["air selangor", "#0072BC", "AS"],
+  ["indah water", "#0072BC", "IWK"],
+  ["time dotcom", "#E31837", "TIME"],
+  ["aia", "#D31145", "AIA"],
+  ["great eastern", "#E31837", "GE"],
+  ["prudential", "#ED1B2E", "Pru"],
+  ["allianz", "#003781", "Alz"],
+  ["takaful", "#00694B", "Tak"],
+  ["anytime fitness", "#6A2C91", "AF"],
+  ["celebrity fit", "#E4002B", "CF"],
+  ["sephora", "#111111", "Sep"],
 ];
 function brand(n) {
   n = (n || "").toLowerCase();
@@ -1931,7 +2942,7 @@ function badge(b) {
   );
 }
 function txi(t) {
-  var b = t.note && brand(t.note);
+  var b = (t.note || t.sub) && brand((t.note || "") + " " + (t.sub || ""));
   return b ? badge(b) : ci(t.cat);
 }
 function pb(v, html, sel, fs) {
@@ -2703,8 +3714,7 @@ function favs() {
           i +
           '">⭐ ' +
           esc(x.name) +
-          " " +
-          fmt(x.amt, (acc(x.acc) || {}).cur) +
+          (x.amt > 0 ? " " + fmt(x.amt, (acc(x.acc) || {}).cur) : "") +
           "</button>"
         );
       })
@@ -2730,7 +3740,7 @@ async function csv(from, to) {
   try {
     var dl = await claude.use("downloads");
     if (!dl) return;
-    var rows = [["日期", "类型", "账户", "分类", "金额", "币种", "备注", "记录人", "折合 " + S.base, "手填MYR"]];
+    var rows = [["日期", "类型", "账户", "分类", "金额", "币种", "备注", "记录人", "折合 " + S.base, "手填MYR", "AA已收回", "里程km", "升数"]];
     S.tx
       .slice()
       .filter(function (t) {
@@ -2752,6 +3762,9 @@ async function csv(from, to) {
           t.by || "",
           t.type === "transfer" ? "" : +cvt(t.amt, t).toFixed(2),
           t.myr || "",
+          t.sp ? spBack(t) : "",
+          t.odo || "",
+          t.lit || "",
         ]);
       });
     var s =
@@ -3294,10 +4307,13 @@ function pinSheet() {
   m.querySelector("#ok").onclick = function () {
     var p = m.querySelector("#pn").value;
     if (/^[0-9]{4,6}$/.test(p)) {
-      S.pin = p;
-      save();
+      pinHash(p).then(function (h) {
+        S.pin = h;
+        S.pinLen = p.length;
+        save();
+        render();
+      });
       m.remove();
-      render();
     } else toast("PIN 需要是 4 到 6 位数字");
   };
 }
@@ -3305,12 +4321,12 @@ var UN = null;
 function mark() {
   UN = { cur: cur, j: JSON.stringify(S), fresh: true };
 }
-function showUndo() {
+function showUndo(msg) {
   var d = document.createElement("div");
   d.style.cssText =
     "position:fixed;left:50%;bottom:110px;transform:translateX(-50%);background:#4a2a33;color:#fff;padding:10px 14px;border-radius:14px;z-index:200;display:flex;gap:14px;align-items:center";
   d.innerHTML =
-    '<span>已删除</span><button style="background:none;border:0;color:#ffb3c6;font:inherit;font-weight:700;cursor:pointer">撤销</button>';
+    '<span>' + esc(msg || '已删除') + '</span><button style="background:none;border:0;color:#ffb3c6;font:inherit;font-weight:700;cursor:pointer">撤销</button>';
   d.querySelector("button").onclick = function () {
     undo();
     d.remove();
@@ -3757,7 +4773,7 @@ function txSheet(edit, pre) {
     pre || {
       type: "expense",
       amt: "",
-      acc: S.accounts[0] && S.accounts[0].id,
+      acc: defAcc(),
       to: (S.accounts[1] || {}).id,
       cat: "餐饮",
       note: "",
@@ -3849,6 +4865,8 @@ function txSheet(edit, pre) {
           '<button class="chip" data-c="__new">＋ 自定义</button></div>' +
           subF()) +
       aaF(t.aa, st.type, t.pay) +
+      spF() +
+      fuelF() +
       pF(t.p) +
       gF(t) +
       '<label>日期</label><input id="dt" type="date" value="' +
@@ -3970,11 +4988,51 @@ function txSheet(edit, pre) {
           '" data-sub="' +
           esc(x) +
           '">' +
+          (brand(x) ? badge(brand(x)) + " " : "") +
           esc(x) +
           "</button>"
         );
       }).join("") +
       "</div>"
+    );
+  }
+  function spF() {
+    if (cur !== "mine" || st.type !== "expense") return "";
+    var sp = t.sp,
+      locked = sp && sp.pays && sp.pays.length,
+      h =
+        '<label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="spon" style="width:auto"' +
+        (sp ? " checked" : "") + (locked ? " disabled" : "") + "> 👥 AA 分账（我先垫付，朋友之后还我）</label>";
+    if (!sp) return h;
+    var am = parseFloat(t.amt) || 0,
+      n = Math.max(2, parseInt(sp.n) || 2),
+      cu = (acc(t.acc) || {}).cur;
+    h +=
+      '<div class="card" style="margin:8px 0;background:var(--accbg);box-shadow:none"><label style="margin-top:0">几个人分（含我）</label><input id="spn" type="number" inputmode="numeric" min="2" step="1" value="' +
+      n + '"><label>我的那份（留空 = 平均分）</label><input id="spm" type="number" inputmode="decimal" step="0.01" placeholder="' +
+      (am > 0 ? (am / n).toFixed(2) : "") + '" value="' + esc(sp.mine === undefined || sp.mine === "" ? "" : sp.mine) +
+      '"><label>谁欠我（选填）</label><input id="spw" value="' + esc(sp.who || "") + '" placeholder="例如：Ali、Siti"><div class="mute" id="spi" style="margin-top:8px">' +
+      spInfo(am, spMineOf(am, sp), spBack({ sp: sp }), cu) + "</div>";
+    (sp.pays || []).forEach(function (p, i) {
+      h +=
+        '<div class="row" style="margin-top:6px"><span class="sp mute">' + esc(p.date) + " 收到 " + fmt(p.amt, cu) + " → " +
+        esc((acc(p.acc) || {}).name || "已删除") + '</span><button class="chip" data-sprm="' + i + '">✕</button></div>';
+    });
+    return h + '<button class="btn" id="sprv" style="margin-top:10px;background:var(--card);color:var(--acc);box-shadow:none;border:1px solid var(--acc)">💸 对方还钱了</button></div>';
+  }
+  function fuelF() {
+    if (cur !== "mine" || st.type !== "expense" || st.cat !== "油费") return "";
+    if (!S.cars.length) return '<button class="chip" id="fnew" style="margin:8px 0">🚗 添加车辆，记录里程和油耗</button>';
+    var cid = S.cars.some(function (x) { return x.id === t.car; }) ? t.car : S.cars[0].id,
+      car = S.cars.find(function (x) { return x.id === cid; });
+    return (
+      '<label>⛽ 加油记录</label><select id="fcar">' +
+      S.cars.map(function (x) { return '<option value="' + x.id + '"' + (x.id === cid ? " selected" : "") + ">" + esc(x.name) + "</option>"; }).join("") +
+      '</select><div class="row" style="gap:8px;margin-top:8px"><input id="fodo" type="number" inputmode="numeric" placeholder="目前里程 km' +
+      (car.odo ? "（上次 " + car.odo + "）" : "") + '" value="' + esc(t.odo || "") +
+      '"><input id="flit" type="number" inputmode="decimal" step="0.01" placeholder="加了多少升" value="' + esc(t.lit || "") +
+      '"></div><div class="mute" id="fli" style="margin-top:6px">' +
+      fuelNow(cid, parseFloat(t.odo) || 0, parseFloat(t.lit) || 0, parseFloat(t.amt) || 0, t.id, (acc(t.acc) || {}).cur) + "</div>"
     );
   }
   function myrF() {
@@ -4016,6 +5074,25 @@ function txSheet(edit, pre) {
     t.fee = g("fee");
     t.toAmt = g("ta");
     t.myr = g("myr");
+    var fc = sh.querySelector("#fcar");
+    if (fc) {
+      t.car = fc.value;
+      t.odo = g("fodo");
+      t.lit = g("flit");
+    }
+    var sq = sh.querySelector("#spon");
+    if (sq && !sq.disabled) {
+      if (sq.checked) {
+        var so = t.sp || { pays: [] },
+          sn = sh.querySelector("#spn"),
+          sm = sh.querySelector("#spm"),
+          sw2 = sh.querySelector("#spw");
+        so.n = Math.max(2, parseInt(sn ? sn.value : so.n) || 2);
+        if (sm) so.mine = sm.value;
+        if (sw2) so.who = sw2.value;
+        t.sp = so;
+      } else t.sp = undefined;
+    }
     var aq = sh.querySelector("#aa");
     if (aq) t.aa = aq.checked;
     var pq = sh.querySelector("#pv");
@@ -4035,6 +5112,26 @@ function txSheet(edit, pre) {
   draw();
   sh.addEventListener("input", function (e) {
     var id = e.target.id;
+    if (id === "amt" || id === "fodo" || id === "flit") {
+      var fi = sh.querySelector("#fli"),
+        fq = sh.querySelector("#fcar");
+      if (fi && fq)
+        fi.textContent = fuelNow(
+          fq.value, parseFloat(sh.querySelector("#fodo").value) || 0, parseFloat(sh.querySelector("#flit").value) || 0,
+          parseFloat(sh.querySelector("#amt").value) || 0, t.id, (acc(t.acc) || {}).cur,
+        );
+    }
+    if (id === "amt" || id === "spn" || id === "spm") {
+      var pn = sh.querySelector("#spn"),
+        pm = sh.querySelector("#spm"),
+        pi = sh.querySelector("#spi");
+      if (pn && pm && pi) {
+        var a1 = parseFloat(sh.querySelector("#amt").value) || 0,
+          n1 = Math.max(2, parseInt(pn.value) || 2);
+        pm.placeholder = a1 > 0 ? (a1 / n1).toFixed(2) : "";
+        pi.textContent = spInfo(a1, spMineOf(a1, { n: n1, mine: pm.value }), spBack({ sp: t.sp }), (acc(t.acc) || {}).cur);
+      }
+    }
     if (id !== "amt" && id !== "myr") return;
     var sel = sh.querySelector("#acc"),
       ao = acc(sel ? sel.value : t.acc),
@@ -4054,7 +5151,12 @@ function txSheet(edit, pre) {
       });
       return;
     }
-    if (e.target.id === "acc" || e.target.id === "to") {
+    if (e.target.id === "fcar") {
+      keep();
+      draw();
+      return;
+    }
+    if (e.target.id === "acc" || e.target.id === "to" || e.target.id === "spon") {
       keep();
       draw();
     }
@@ -4070,6 +5172,23 @@ function txSheet(edit, pre) {
     } else if (b.dataset.sub !== undefined) {
       keep();
       t.sub = t.sub === b.dataset.sub ? undefined : b.dataset.sub;
+      draw();
+    } else if (b.id === "fnew") {
+      keep();
+      carNew(function () {
+        draw();
+      });
+    } else if (b.id === "sprv") {
+      keep();
+      var am3 = parseFloat(t.amt) || 0,
+        sp3 = t.sp || {};
+      spPaySheet(t, Math.max(0, am3 - spMineOf(am3, sp3) - spBack({ sp: sp3 })), function (p) {
+        t.sp.pays = (t.sp.pays || []).concat([p]);
+        draw();
+      });
+    } else if (b.dataset.sprm !== undefined) {
+      keep();
+      t.sp.pays.splice(+b.dataset.sprm, 1);
       draw();
     } else if (b.id === "rmimg") {
       keep();
@@ -4111,6 +5230,7 @@ function txSheet(edit, pre) {
           amt: fa2,
           acc: t.acc,
           cat: st.cat,
+          sub: t.sub,
           note: t.note,
         });
         save();
@@ -4147,6 +5267,7 @@ function txSheet(edit, pre) {
         p: cur === "mine" && (t.p || t.gift) ? 1 : undefined,
         gift: cur === "mine" && t.gift ? 1 : undefined,
         gd: cur === "mine" && t.gift && t.gd ? t.gd : undefined,
+        trip: edit ? edit.trip : S.trip ? S.trip.name : undefined,
         img: cur === "mine" ? t.img : undefined,
         sub:
           st.type !== "transfer" && ((S.sub || {})[st.cat] || []).indexOf(t.sub) >= 0
@@ -4161,6 +5282,25 @@ function txSheet(edit, pre) {
       var fa0 = acc(t.acc),
         mv = parseFloat(t.myr);
       if (st.type !== "transfer" && fa0 && fa0.cur !== "MYR" && mv > 0) rec.myr = mv;
+      if (cur === "mine" && st.type === "expense" && st.cat === "油费" && S.cars.length) {
+        var fcid = S.cars.some(function (x) { return x.id === t.car; }) ? t.car : S.cars[0].id,
+          fo = parseFloat(t.odo),
+          fl = parseFloat(t.lit),
+          fcar = S.cars.find(function (x) { return x.id === fcid; });
+        rec.car = fcid;
+        rec.odo = fo > 0 ? fo : undefined;
+        rec.lit = fl > 0 ? fl : undefined;
+        if (fo > (+fcar.odo || 0)) fcar.odo = fo;
+      }
+      if (cur === "mine" && st.type === "expense" && t.sp) {
+        var spmv = parseFloat(t.sp.mine);
+        rec.sp = {
+          n: Math.max(2, parseInt(t.sp.n) || 2),
+          mine: spmv >= 0 ? Math.min(amt, +spmv.toFixed(2)) : undefined,
+          who: (t.sp.who || "").trim() || undefined,
+          pays: t.sp.pays || [],
+        };
+      }
       if (cur === "joint" && st.type !== "transfer") {
         var py = t.pay || "joint";
         rec.pay = py;
@@ -4203,16 +5343,84 @@ function txSheet(edit, pre) {
 
 document.addEventListener("click", function (e) {
   var el = e.target.closest(
-    "[data-tab],[data-go],[data-tx],[data-acc],[data-m],[data-hm],[data-sm],[data-sn],[data-sd],[data-base],[data-addcat],[data-delcat],[data-bk],[data-act]",
+    "[data-tab],[data-go],[data-tx],[data-acc],[data-m],[data-hm],[data-sprecv],[data-car],[data-sm],[data-sn],[data-sd],[data-base],[data-addcat],[data-delcat],[data-bk],[data-act]",
   );
   if (e.target.id === "cam") {
     document.getElementById("shot").click();
     return;
   }
   if (e.target.id === "fab") {
-    txSheet();
+    plusMenu();
     return;
   }
+  if (e.target.id === "carnew") {
+    carNew();
+    return;
+  }
+  if (e.target.id === "tripgo") {
+    S.trip = { name: document.getElementById("trn").value.trim() || "旅行 " + today(), cur: document.getElementById("trc").value };
+    save();
+    render();
+    toast("旅行模式已开启");
+    return;
+  }
+  if (e.target.id === "tripend") {
+    S.trip = undefined;
+    save();
+    render();
+    return;
+  }
+  if (e.target.id === "selbtn") {
+    selMode = !selMode;
+    sel = {};
+    render();
+    return;
+  }
+  if (e.target.id === "seldel") {
+    var ids = Object.keys(sel);
+    if (!ids.length) return toast("先点选要删除的记录");
+    if (!confirm("删除选中的 " + ids.length + " 笔记录？删除后可以点「撤销」找回")) return;
+    var gone = S.tx.filter(function (x) { return sel[x.id]; });
+    mark();
+    S.tx = S.tx.filter(function (x) { return !sel[x.id]; });
+    if (cur === "joint") gone.forEach(function (x) { mirror(x, true); });
+    selMode = false;
+    sel = {};
+    save();
+    render();
+    showUndo();
+    return;
+  }
+  if (e.target.id === "selcat") {
+    var ids2 = Object.keys(sel);
+    if (!ids2.length) return toast("先点选要修改的记录");
+    var mm = openSheet(
+      '<b>批量改分类</b><div class="mute">只会改类型相同的记录（支出分类改支出，收入分类改收入）</div><select id="bc" style="margin-top:10px"><optgroup label="支出分类">' +
+        S.cats.expense.map(function (c) { return '<option value="expense:' + esc(c) + '">' + esc(c) + "</option>"; }).join("") +
+        '</optgroup><optgroup label="收入分类">' +
+        S.cats.income.map(function (c) { return '<option value="income:' + esc(c) + '">' + esc(c) + "</option>"; }).join("") +
+        '</optgroup></select><button class="btn" id="ok">应用到 ' + ids2.length + " 笔</button>",
+    );
+    mm.querySelector("#ok").onclick = function () {
+      var v = mm.querySelector("#bc").value.split(":"), n = 0;
+      mark();
+      S.tx.forEach(function (x) {
+        if (sel[x.id] && x.type === v[0]) {
+          x.cat = v.slice(1).join(":");
+          delete x.sub;
+          n++;
+        }
+      });
+      selMode = false;
+      sel = {};
+      save();
+      mm.remove();
+      render();
+      showUndo("已修改 " + n + " 笔");
+    };
+    return;
+  }
+  if (e.target.id === "tcat") return;
   if (e.target.id === "fxb") {
     fxUpdate();
     return;
@@ -4237,6 +5445,20 @@ document.addEventListener("click", function (e) {
     backTo = "";
     tab = el.dataset.tab;
     render();
+  } else if (el.dataset.car) {
+    carSheet(el.dataset.car);
+  } else if (el.dataset.sprecv) {
+    var st0 = S.tx.find(function (x) {
+      return x.id === el.dataset.sprecv;
+    });
+    if (!st0) return;
+    spPaySheet(st0, spOwed(st0) - spBack(st0), function (p) {
+      mark();
+      st0.sp.pays = (st0.sp.pays || []).concat([p]);
+      save();
+      render();
+      showUndo("已记录收款 " + fmt(p.amt, (acc(st0.acc) || {}).cur));
+    });
   } else if (el.dataset.hm) {
     statMode = el.dataset.hm;
     statDay = today();
@@ -4267,6 +5489,12 @@ document.addEventListener("click", function (e) {
     tab = el.dataset.go;
     render();
   } else if (el.dataset.tx) {
+    if (selMode && tab === "bills") {
+      if (sel[el.dataset.tx]) delete sel[el.dataset.tx];
+      else sel[el.dataset.tx] = 1;
+      render();
+      return;
+    }
     var t = S.tx.find(function (x) {
       return x.id === el.dataset.tx;
     });
@@ -4299,6 +5527,10 @@ document.addEventListener("change", function (e) {
   }
   if (e.target.id === "fc") {
     fF = e.target.value;
+    render();
+  }
+  if (e.target.id === "tcat") {
+    trendCat = e.target.value;
     render();
   }
   if (e.target.id === "fa") {
