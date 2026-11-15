@@ -165,7 +165,7 @@
   }
   function colRef(p) {
     return {
-      onSnapshot: function (cb) {
+      onSnapshot: function (cb, ms) {
         var sig,
           run = async function () {
             if (document.hidden && sig !== undefined) return;
@@ -206,7 +206,7 @@
             } catch (e) {}
           };
         run();
-        var iv = setInterval(run, 6000);
+        var iv = setInterval(run, ms || 6000);
         return function () {
           clearInterval(iv);
         };

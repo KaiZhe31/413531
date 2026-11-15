@@ -32,5 +32,5 @@ const pad=n=>String(n).padStart(2,"0");
  const w6=boot({"ledger.v1":{accounts:[{id:"a",name:"x",type:"cash",cur:"MYR",bal:0}],tx:[{id:"f",type:"expense",amt:8,acc:"a",cat:"餐饮",date:"2026-02-28"},{id:"g",type:"expense",amt:3,acc:"a",cat:"餐饮",date:"2026-03-31"}]}});
  w6.eval("statMode='month';mon=new Date(2026,1,1)");ok(w6.eval("statRange().b")==="2026-02-28"&&/RM 8\.00/.test(w6.eval("stats()")),"Feb range ends 28 and totals 8");
  w6.eval("mon=new Date(2026,2,1)");ok(/RM 3\.00/.test(w6.eval("stats()")),"Mar 31 included");
- console.log("PASS",pass,"FAIL",fail.length);fail.forEach(f=>console.log(" ✗",f));process.exit(0);
+ console.log("PASS",pass,"FAIL",fail.length);fail.forEach(f=>console.log(" ✗",f));process.exit(fail.length?1:0);
 })().catch(e=>{console.log("CRASH",e.stack.split("\n").slice(0,6).join("\n"));console.log(pass,fail);process.exit(1)});

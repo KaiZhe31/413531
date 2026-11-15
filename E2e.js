@@ -61,5 +61,5 @@ const base={accounts:[{id:"a1",name:"现金",type:"cash",cur:"MYR",bal:100},{id:
  // 13 all tabs render with data, no exceptions
  for(const t of ["home","bills","accts","stats","set"]){w.__s("tab","'"+t+"'");w.eval("render()")}
  ok(w.errs.length===0,"no uncaught errors: "+w.errs.join("|"));
- console.log("PASS",pass,"FAIL",fail.length);fail.forEach(f=>console.log(" ✗",f));
+ console.log("PASS",pass,"FAIL",fail.length);fail.forEach(f=>console.log(" ✗",f));process.exit(fail.length?1:0);
 })().catch(e=>{console.log("CRASH",e.stack.split("\n").slice(0,5).join("\n"));console.log("PASS",pass,fail)});

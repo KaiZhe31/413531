@@ -699,6 +699,7 @@ function render() {
   else if (tab === "bills") h = bills();
   else if (tab === "accts") h = accts() + peers();
   else if (tab === "stats") h = stats();
+  else if (tab === "chat") h = chatPage();
   else h = settings();
   if (0)
     h =
@@ -706,13 +707,16 @@ function render() {
       esc(names[viewId] || "对方") +
       ' 的账本</b><div class="mute">只读，不能修改</div></div><button class="chip on" data-act="back">返回我的</button></div>' +
       h;
-  document.getElementById("fab").style.display = RO ? "none" : "";
-  document.getElementById("cam").style.display = camOK && !RO ? "" : "none";
+  document.getElementById("fab").style.display = RO || tab === "chat" ? "none" : "";
+  document.getElementById("cam").style.display = camOK && !RO && tab !== "chat" ? "" : "none";
+  var ci0 = tab === "chat" && document.getElementById("cin"),
+    cv = ci0 ? ci0.value : "",
+    cf = ci0 && document.activeElement === ci0;
   h =
     (backTo && tab !== "home"
       ? '<button class="chip" data-tab="' + backTo + '" style="margin-bottom:8px">‹ 返回</button>'
       : "") +
-    switcher() +
+    (tab === "chat" ? "" : switcher()) +
     h;
   document.getElementById("app").innerHTML = h;
   var c2 = document.getElementById("lg2");
@@ -722,8 +726,9 @@ function render() {
     ["bills", "账单", "📒"],
     ["accts", "账户", "👛"],
     ["stats", "统计", "🍰"],
-    ["set", "更多", "🧸"],
   ];
+  if (chatOn()) tabs.push(["chat", "聊天", "💬"]);
+  tabs.push(["set", "更多", "🧸"]);
   document.getElementById("nav").innerHTML = tabs
     .filter(function (t) {
       return !(RO && t[0] === "set");
@@ -736,12 +741,21 @@ function render() {
         (tab === t[0] ? "on" : "") +
         '"><b>' +
         t[2] +
+        (t[0] === "chat" ? chatBadgeHtml() : "") +
         "</b>" +
         t[1] +
         "</button>"
       );
     })
     .join("");
+  if (tab === "chat") {
+    chatBind();
+    var cn = document.getElementById("cin");
+    if (cn && cv) cn.value = cv;
+    if (cn && cf) cn.focus();
+  }
+  chatSub(tab === "chat" ? 2500 : 6000);
+  updateBadge();
 }
 
 function txRow(t) {
@@ -3154,6 +3168,258 @@ function applyRemote(d) {
   }
   if (!LM.same(JSON.parse(ser(getMine())), r)) sync();
 }
+// ---------- 聊天室 ----------
+// 每个人只写自己的文档 chat/<自己的id>（里面是自己发的消息），读对方的文档，所以两个人同时发也不会互相覆盖。
+// 消息和账本用同一个共同密码加密。本机另存一份完整记录，服务器上每人只留最近 300 条。
+var CHK = "ledger.chat",
+  CH = loadChat(),
+  CC = null,
+  CD = null,
+  chatUnsub = null,
+  chatMs = 0,
+  chatQ = Promise.resolve();
+function loadChat() {
+  try {
+    var o = JSON.parse(localStorage.getItem(CHK) || "null");
+    if (o && o.msgs) return o;
+  } catch (e) {}
+  return { msgs: {}, seen: 0, pseen: 0, peer: "", pname: "" };
+}
+function saveChat() {
+  var ids = Object.keys(CH.msgs);
+  if (ids.length > 2000)
+    ids
+      .sort(function (a, b) {
+        return CH.msgs[a].t - CH.msgs[b].t;
+      })
+      .slice(0, ids.length - 2000)
+      .forEach(function (k) {
+        delete CH.msgs[k];
+      });
+  try {
+    localStorage.setItem(CHK, JSON.stringify(CH));
+  } catch (e) {}
+}
+function chatOn() {
+  return shState === "ok" && !!CC;
+}
+function chatList() {
+  return Object.keys(CH.msgs)
+    .map(function (k) {
+      return CH.msgs[k];
+    })
+    .sort(function (a, b) {
+      return a.t - b.t || (a.id < b.id ? -1 : 1);
+    });
+}
+function chatUnread() {
+  var n = 0;
+  Object.keys(CH.msgs).forEach(function (k) {
+    var m = CH.msgs[k];
+    if (m.a !== myId && !m.d && m.t > CH.seen) n++;
+  });
+  return n;
+}
+function chatBadgeHtml() {
+  var n = chatUnread();
+  return n ? '<i class="dot">' + (n > 9 ? "9+" : n) + "</i>" : "";
+}
+function updateBadge() {
+  var n = chatUnread(),
+    b = document.querySelector('#nav [data-tab="chat"] b');
+  if (b) b.innerHTML = "💬" + chatBadgeHtml();
+  document.title = (n ? "(" + n + ") " : "") + "账本";
+  try {
+    if (navigator.setAppBadge) {
+      if (n) navigator.setAppBadge(n);
+      else navigator.clearAppBadge();
+    }
+  } catch (e) {}
+}
+function chatListHtml() {
+  var list = chatList(),
+    h = "",
+    day = "",
+    lastRead = null;
+  list.forEach(function (m) {
+    if (m.a === myId && !m.d && m.t <= CH.pseen && !m.p) lastRead = m.id;
+  });
+  if (!list.length) return '<div class="empty">还没有消息，打个招呼吧 💬</div>';
+  list.forEach(function (m) {
+    var d = new Date(m.t),
+      ds2 = ds(d),
+      mine = m.a === myId;
+    if (ds2 !== day) {
+      day = ds2;
+      h += '<div class="date" style="text-align:center">' + (ds2 === today() ? "今天" : ds2.slice(5).replace("-", "月") + "日") + "</div>";
+    }
+    h +=
+      '<div class="cm ' + (mine ? "r" : "l") + '"><div class="bub ' + (mine ? "me" : "pe") + '" data-cm="' + m.id + '">' +
+      (m.d ? '<i style="opacity:.7">消息已撤回</i>' : esc(m.x)) + '</div><div class="cmeta">' +
+      p2(d.getHours()) + ":" + p2(d.getMinutes()) +
+      (mine ? (m.p ? " · 发送中…" : m.id === lastRead ? " · 已读" : "") : "") + "</div></div>";
+  });
+  return h;
+}
+function chatPage() {
+  if (!chatOn())
+    return '<div class="card"><b>💬 聊天</b><div class="mute" style="margin-top:6px">先在「更多 → 同步设置」连接你们的数据库，就能在这里聊天了。</div></div>';
+  return (
+    '<div class="card" style="padding:10px 14px"><b>💬 ' + esc(CH.pname || "聊天") +
+    '</b><div class="mute">消息已加密，两个人都打开 App 时几秒内会同步（没有推送通知）</div></div><div id="chatlist" style="padding-bottom:130px">' +
+    chatListHtml() +
+    '</div><div class="chatbar"><div class="in"><div class="chips emo">' +
+    ["😘", "❤️", "😂", "👍", "🥺"].map(function (e) { return '<button class="chip">' + e + "</button>"; }).join("") +
+    '</div><div class="row" style="margin-top:6px"><input id="cin" placeholder="说点什么…" autocomplete="off" enterkeyhint="send"><button class="chip on" id="csend" style="padding:9px 16px">发送</button></div></div></div>'
+  );
+}
+function chatScroll() {
+  window.scrollTo(0, document.body.scrollHeight);
+}
+function chatDraw(force) {
+  var l = document.getElementById("chatlist");
+  if (!l) return;
+  var near = window.innerHeight + window.scrollY >= document.body.scrollHeight - 160;
+  l.innerHTML = chatListHtml();
+  if (force || near) chatScroll();
+  chatSeen();
+}
+function chatSeen() {
+  if (tab !== "chat" || document.hidden) return;
+  var latest = CH.seen;
+  Object.keys(CH.msgs).forEach(function (k) {
+    var m = CH.msgs[k];
+    if (m.a !== myId && m.t > latest) latest = m.t;
+  });
+  if (latest > CH.seen) {
+    CH.seen = latest;
+    saveChat();
+    updateBadge();
+    chatPush();
+  }
+}
+function chatBind() {
+  var inp = document.getElementById("cin"),
+    l = document.getElementById("chatlist");
+  if (!inp || !l) return;
+  function send() {
+    var v = inp.value;
+    inp.value = "";
+    chatSend(v);
+    inp.focus();
+  }
+  document.getElementById("csend").onclick = send;
+  inp.onkeydown = function (e) {
+    if (e.key === "Enter" && !e.isComposing) {
+      e.preventDefault();
+      send();
+    }
+  };
+  document.querySelectorAll(".emo button").forEach(function (b) {
+    b.onclick = function () {
+      chatSend(b.textContent);
+    };
+  });
+  l.onclick = function (e) {
+    var b = e.target.closest("[data-cm]");
+    if (!b) return;
+    var m = CH.msgs[b.dataset.cm];
+    if (m && m.a === myId && !m.d && confirm("撤回这条消息？")) chatRecall(m.id);
+  };
+  chatScroll();
+  chatSeen();
+}
+function chatSend(x) {
+  x = String(x || "").trim();
+  if (!x || !myId) return;
+  var m = { id: uid(), a: myId, t: Date.now(), x: x.slice(0, 1000), p: 1 };
+  CH.msgs[m.id] = m;
+  saveChat();
+  chatDraw(true);
+  chatPush();
+}
+function chatRecall(id) {
+  var m = CH.msgs[id];
+  if (!m || m.a !== myId) return;
+  m.d = 1;
+  m.x = "";
+  saveChat();
+  chatDraw();
+  chatPush();
+}
+// 把自己的消息写到云端（先读后写，合并别的设备发的，只保留最近 300 条）
+function chatPush() {
+  chatQ = chatQ.then(async function () {
+    if (!CD || !myId) return;
+    try {
+      var sn = await CD.get(),
+        mine = {};
+      if (sn.exists && sn.data().json) {
+        try {
+          (JSON.parse(sn.data().json).m || []).forEach(function (m) {
+            mine[m.id] = m;
+          });
+        } catch (e) {}
+      }
+      Object.keys(CH.msgs).forEach(function (k) {
+        var m = CH.msgs[k];
+        if (m.a === myId) mine[k] = { id: m.id, t: m.t, x: m.d || (mine[k] && mine[k].d) ? "" : m.x, d: m.d || (mine[k] && mine[k].d) || undefined };
+      });
+      var arr = Object.keys(mine)
+        .map(function (k) {
+          return mine[k];
+        })
+        .sort(function (a, b) {
+          return a.t - b.t;
+        })
+        .slice(-300);
+      await CD.set({ json: JSON.stringify({ m: arr, seen: CH.seen }), t: Date.now() });
+      Object.keys(CH.msgs).forEach(function (k) {
+        delete CH.msgs[k].p;
+      });
+      saveChat();
+      if (tab === "chat") chatDraw();
+    } catch (e) {
+      /* 没发出去的消息保持「发送中」，下次会一起补发 */
+    }
+  });
+  return chatQ;
+}
+function chatMerge(id, data, fresh) {
+  var o;
+  try {
+    o = JSON.parse(data.json);
+  } catch (e) {
+    return;
+  }
+  (o.m || []).forEach(function (m) {
+    if (!CH.msgs[m.id] && id !== myId && !m.d) fresh.push(m);
+    CH.msgs[m.id] = { id: m.id, a: id, t: m.t, x: m.x, d: m.d };
+  });
+  if (id !== myId) {
+    CH.peer = id;
+    if (data.name) CH.pname = data.name;
+    CH.pseen = o.seen || 0;
+  } else CH.seen = Math.max(CH.seen, o.seen || 0);
+}
+function chatSub(ms) {
+  if (!CC || chatMs === ms) return;
+  if (chatUnsub) chatUnsub();
+  chatMs = ms;
+  chatUnsub = CC.onSnapshot(function (sn) {
+    var fresh = [];
+    sn.docs.forEach(function (d) {
+      chatMerge(d.id, d.data(), fresh);
+    });
+    saveChat();
+    updateBadge();
+    if (tab === "chat") chatDraw();
+    else if (fresh.length) toast("💬 " + (CH.pname || "对方") + "：" + fresh[fresh.length - 1].x.slice(0, 30));
+  }, ms);
+}
+setInterval(function () {
+  if (chatOn() && Object.keys(CH.msgs).some(function (k) { return CH.msgs[k].p; })) chatPush();
+}, 8000);
 async function initShare() {
   try {
     var c = await claude.use("db"),
@@ -3186,6 +3452,8 @@ async function initShare() {
       })
       .catch(function () {});
     LC = c.collection("ledgers");
+    CC = c.collection("chat");
+    CD = c.doc("chat/" + me);
     JD = c.doc("joint/main");
     JD.onSnapshot(function (sn) {
       if (!sn.exists) {
@@ -3246,6 +3514,8 @@ async function initShare() {
       } else if (tab === "set" && !RO) render();
     });
     shState = "ok";
+    chatSub(6000);
+    render();
     DBR.onSnapshot(
       function (sn) {
         if (!lsGet()) return;

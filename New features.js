@@ -97,5 +97,5 @@ const base={accounts:[{id:"a1",name:"现金",type:"cash",cur:"MYR",bal:100},{id:
  for(const t of ["home","bills","accts","stats","set"]){w9.eval("tab='"+t+"';render()")}
  ok(w9.errs.length===0,"renders with new categories: "+w9.errs.join("|"));
  ok(w.errs.length===0,"no uncaught errors: "+w.errs.join("|"));
- console.log("PASS",pass,"FAIL",fail.length);fail.forEach(f=>console.log(" ✗",f));process.exit(0);
+ console.log("PASS",pass,"FAIL",fail.length);fail.forEach(f=>console.log(" ✗",f));process.exit(fail.length?1:0);
 })().catch(e=>{console.log("CRASH",e.stack.split("\n").slice(0,6).join("\n"));console.log(pass,fail);process.exit(1)});

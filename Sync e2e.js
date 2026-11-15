@@ -31,5 +31,5 @@ const cfg=n=>({"ledger.fb":{url:"https://t-default-rtdb.firebaseio.com",pass:"co
  await wait(4000);
  ok(!C.__g("JOINT"),"wrong password sees nothing");
  [A,B,C].forEach((w,i)=>ok(w.errs.length===0,"no uncaught errors device "+"ABC"[i]+": "+w.errs.join("|")));
- console.log("PASS",pass,"FAIL",fail.length);fail.forEach(f=>console.log(" ✗",f));process.exit(0);
+ console.log("PASS",pass,"FAIL",fail.length);fail.forEach(f=>console.log(" ✗",f));process.exit(fail.length?1:0);
 })().catch(e=>{console.log("CRASH",e.stack.split("\n").slice(0,6).join("\n"));console.log("PASS",pass,fail);process.exit(1)});

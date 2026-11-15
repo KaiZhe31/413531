@@ -49,5 +49,5 @@ const near=(a,b)=>Math.abs(a-b)<0.005;
  let cap="";w.claude={use:async()=>({save:async r=>{cap=r.data}})};await w.eval("csv('2000-01-01','2100-01-01')");ok(/AA已收回/.test(cap),"csv has AA repaid column");
  for(const tb of ["home","bills","accts","stats","set"]){w.eval("tab='"+tb+"';render()")}
  ok(w.errs.length===0,"no uncaught errors: "+w.errs.join("|"));
- console.log("PASS",pass,"FAIL",fail.length);fail.forEach(f=>console.log(" ✗",f));process.exit(0);
+ console.log("PASS",pass,"FAIL",fail.length);fail.forEach(f=>console.log(" ✗",f));process.exit(fail.length?1:0);
 })().catch(e=>{console.log("CRASH",e.stack.split("\n").slice(0,6).join("\n"));console.log(pass,fail);process.exit(1)});

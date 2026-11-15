@@ -6,7 +6,7 @@ function boot(seed,store){
   const w=dom.window;w.indexedDB=fake.indexedDB;w.TextEncoder=TextEncoder;w.TextDecoder=TextDecoder;
   Object.defineProperty(w,"crypto",{value:nodeCrypto.webcrypto});
   w.HTMLCanvasElement.prototype.toDataURL=()=>"";w.HTMLCanvasElement.prototype.getContext=()=>new Proxy({},{get:()=>()=>({addColorStop(){}}),set:()=>true});
-  w.errs=[];w.addEventListener("error",e=>w.errs.push(e.message));
+  w.scrollTo=function(){};w.errs=[];w.addEventListener("error",e=>w.errs.push(e.message));
   if(store){w.fetch=async(u,o)=>{u=String(u);const key=u.split("?")[0],m=(o&&o.method)||"GET";
     if(m==="PUT"){store.d[key]=JSON.parse(o.body);return {ok:true,json:async()=>({})}}
     if(u.includes("shallow=true")){const base=key.replace(/\.json$/,"/");const ks={};Object.keys(store.d).forEach(k=>{if(k.startsWith(base)){ks[k.slice(base.length).split("/")[0].replace(/\.json$/,"")]=true}});return {ok:true,json:async()=>ks}}

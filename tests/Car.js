@@ -55,5 +55,5 @@ const near=(a,b,e=0.005)=>Math.abs(a-b)<e;
  const mg=JSON.parse(w.eval("JSON.stringify(LM.merge({accounts:[],tx:[],cars:[{id:'c1',name:'A'}],_t:1},{accounts:[],tx:[],cars:[{id:'c2',name:'B'}],_t:2}))"));ok(mg.cars.length===2,"cars from two devices merge");
  for(const tb of ["home","bills","accts","stats","set"]){w.eval("tab='"+tb+"';render()")}
  ok(w.errs.length===0,"no uncaught errors: "+w.errs.join("|"));
- console.log("PASS",pass,"FAIL",fail.length);fail.forEach(f=>console.log(" ✗",f));process.exit(0);
+ console.log("PASS",pass,"FAIL",fail.length);fail.forEach(f=>console.log(" ✗",f));process.exit(fail.length?1:0);
 })().catch(e=>{console.log("CRASH",e.stack.split("\n").slice(0,6).join("\n"));console.log(pass,fail);process.exit(1)});
