@@ -8,7 +8,7 @@
  * - 设置类字段（分类、汇率、预算…）以 _t 较新的一边为准
  */
 var LM = (function () {
-  var ARR = ["tx", "goals", "wish", "ann", "accounts", "rec", "fav", "cars"];
+  var ARR = ["tx", "goals", "wish", "ann", "accounts", "rec", "fav", "cars", "pl"];
   var KEEP_DEL_MS = 400 * 24 * 3600 * 1000;
   var BASE = {};
 
@@ -115,6 +115,8 @@ var LM = (function () {
     var remoteBase = Rt > Lt; // 设置类字段以较新的一边为准
     var out = clone(remoteBase ? R : L);
     out.pin = L.pin;
+  // 经期设置：没共享时不会上传，所以以有这份设置的一边为准，两边都有就跟随较新的一边
+  if (L.pset || R.pset) out.pset = L.pset && R.pset ? (remoteBase ? R.pset : L.pset) : L.pset || R.pset;
     out._t = Math.max(Lt, Rt);
     var del = {};
     [R.del || {}, L.del || {}].forEach(function (d) {

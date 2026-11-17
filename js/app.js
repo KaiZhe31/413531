@@ -198,6 +198,7 @@ function migrate() {
     });
   }
   S.cars = S.cars || [];
+  S.pl = S.pl || [];
   S.fav = S.fav || [];
   // 第一次用快速记账时放 3 个示例模板（可在「快速记账 → 管理模板」里改 / 删）
   if (!S.mig.qk && cur !== "joint" && cur !== "other") {
@@ -280,7 +281,8 @@ var tab = "home",
   selMode = false,
   sel = {},
   trendCat = "",
-  qManage = false;
+  qManage = false,
+  perMon = new Date();
 function load() {
   try {
     var r = localStorage.getItem(KEY);
@@ -700,6 +702,7 @@ function render() {
   else if (tab === "accts") h = accts() + peers();
   else if (tab === "stats") h = stats();
   else if (tab === "chat") h = chatPage();
+  else if (tab === "period") h = periodPage();
   else h = settings();
   if (0)
     h =
@@ -789,6 +792,7 @@ function txRow(t) {
       sw = spOwed(t) - sb;
     sub += " · 👥 垫付 " + fmt(t.amt, a.cur) + (sb ? "，已收 " + fmt(sb, a.cur) : "") + (sw > 0.005 ? "，待收 " + fmt(sw, a.cur) : " ✓");
   }
+  if (t.q) sub += ' · <b class="exp">❓ ' + esc((t.q.who || "") + (t.q.text ? "：" + t.q.text : " 有疑问")) + "</b>";
   if (t.odo || t.lit) sub += " · ⛽ " + (t.lit ? t.lit + " L" : "") + (t.lit && t.odo ? " · " : "") + (t.odo ? t.odo + " km" : "");
   if (t.by)
     sub +=
@@ -1301,6 +1305,345 @@ function imgAll() {
     });
   });
 }
+// ---------- 💗 经期记录 ----------
+// S.pl = [{ id, start, end? }]   S.pset = { on, cycle, len, days, share }
+// 预测只是按记录估算：下次开始 = 上次开始 + 平均周期；排卵日约在下次开始前 14 天；易孕期 = 排卵日前 5 天到后 1 天
+function addDays(str, n) {
+  var d = pd(str);
+  return ds(new Date(d.getFullYear(), d.getMonth(), d.getDate() + n));
+}
+function dayDiff(a, b) {
+  return Math.round((pd(b) - pd(a)) / 864e5);
+}
+function perMD(str) {
+  var d = pd(str);
+  return d.getMonth() + 1 + "月" + d.getDate() + "日";
+}
+function perCalc(pl, ps, td) {
+  ps = ps || {};
+  td = td || today();
+  var logs = (pl || [])
+      .filter(function (x) { return x && x.start; })
+      .sort(function (a, b) { return a.start < b.start ? -1 : a.start > b.start ? 1 : 0; }),
+    gaps = [],
+    lens = [];
+  for (var i = 1; i < logs.length; i++) {
+    var g = dayDiff(logs[i - 1].start, logs[i].start);
+    if (g >= 15 && g <= 60) gaps.push(g);
+  }
+  logs.forEach(function (x) {
+    if (x.end) {
+      var l = dayDiff(x.start, x.end) + 1;
+      if (l >= 1 && l <= 14) lens.push(l);
+    }
+  });
+  function avg(a, d) {
+    a = a.slice(-6);
+    return a.length ? Math.round(a.reduce(function (t, v) { return t + v; }, 0) / a.length) : d;
+  }
+  var cyc = avg(gaps, +ps.cycle || 28),
+    len = avg(lens, +ps.len || 5),
+    last = logs[logs.length - 1] || null,
+    out = { logs: logs, cycle: cyc, len: len, last: last, auto: gaps.length > 0, starts: [], kind: "none" };
+  if (!last) return out;
+  var s = addDays(last.start, cyc);
+  for (var k = 0; k < 6; k++) {
+    out.starts.push(s);
+    s = addDays(s, cyc);
+  }
+  out.next = out.starts[0];
+  var inEnd = last.end || addDays(last.start, len + 1);
+  if (td >= last.start && td <= inEnd) {
+    out.kind = "in";
+    out.day = dayDiff(last.start, td) + 1;
+  } else if (td < out.next) {
+    out.kind = "before";
+    out.days = dayDiff(td, out.next);
+  } else if (td === out.next) {
+    out.kind = "today";
+    out.days = 0;
+  } else {
+    out.kind = "late";
+    out.days = dayDiff(out.next, td);
+  }
+  return out;
+}
+function perDay(C, d, td) {
+  var r = {};
+  C.logs.forEach(function (x) {
+    var e = x.end || addDays(x.start, C.len - 1);
+    if (!x.end && x === C.last && td > e && dayDiff(x.start, td) <= C.len + 1) e = td;
+    if (d >= x.start && d <= e) r.act = 1;
+  });
+  C.starts.forEach(function (s) {
+    var o = addDays(s, -14);
+    if (d >= s && d <= addDays(s, C.len - 1)) r.pred = 1;
+    if (d === o) r.ovu = 1;
+    else if (d >= addDays(o, -5) && d <= addDays(o, 1)) r.fer = 1;
+    if (d >= addDays(s, -5) && d < s) r.pms = 1;
+  });
+  return r;
+}
+// 当前状态一句话 + 小提示；show = 值得在首页提醒
+function perNow(P, ps, partner, name) {
+  ps = ps || {};
+  var C = perCalc(P, ps),
+    w = partner ? (name || "她") + " 的" : "",
+    dd = +ps.days || 2,
+    o = { C: C, show: false, text: "", tip: "" };
+  if (C.kind === "none") {
+    o.text = w + "经期：还没有记录";
+    o.tip = partner ? "" : "点这里开始记录";
+  } else if (C.kind === "in") {
+    o.text = w + "经期第 " + C.day + " 天";
+    o.tip = partner ? "给她准备暖宝宝和热饮，多体谅，别让她碰凉的" : "多喝热水，注意休息，别吃太凉的";
+    o.show = true;
+  } else if (C.kind === "today") {
+    o.text = w + "经期预计今天开始";
+    o.tip = partner ? "帮她备好暖宝宝和热饮" : "记得备好用品";
+    o.show = true;
+  } else if (C.kind === "late") {
+    o.text = w + "经期已推迟 " + C.days + " 天";
+    o.tip = partner ? "别催她，关心一下就好" : "如果延迟很久或担心，可以咨询医生";
+    o.show = C.days <= 21;
+  } else {
+    o.text = (partner ? w + "下次经期还有 " : "距离下次经期还有 ") + C.days + " 天（" + perMD(C.next) + "）";
+    o.tip = C.days <= 5 ? (partner ? "快到了，她的情绪可能起伏，多一点耐心和温柔" : "快到经期了，可能情绪起伏或小腹不适，提前备好用品") : "";
+    o.show = C.days <= dd;
+  }
+  return o;
+}
+function perHomeCard() {
+  if (RO || cur !== "mine" || !(S.pset && S.pset.on)) return "";
+  var n = perNow(S.pl, S.pset, false);
+  return (
+    '<div class="card row" data-go="period" style="cursor:pointer"><div class="ico">💗</div><div class="sp"><b>' + esc(n.text) + "</b>" +
+    (n.tip ? '<div class="mute">' + esc(n.tip) + "</div>" : "") + '</div><span class="mute">›</span></div>'
+  );
+}
+function perSetCard() {
+  if (cur !== "mine" || RO) return "";
+  var ps = S.pset || {};
+  return (
+    '<div class="card"><b>💗 经期记录</b><div class="mute" style="margin:4px 0 8px">记录经期、预测下一次、提前提醒。数据默认只存在这台手机，不会上传。</div>' +
+    '<label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="pon2" style="width:auto"' + (ps.on ? " checked" : "") +
+    "> 启用经期记录</label>" + (ps.on ? '<button class="btn" data-go="period" style="margin-top:10px">打开经期日历</button>' : "") + "</div>"
+  );
+}
+// 对方（女朋友）选择共享后，从同步空间里读到她的预测，首页提醒
+var PCACHE = {};
+function periodOf(id) {
+  var str = others && others[id];
+  if (!str) return null;
+  if (PCACHE[id] && PCACHE[id].s === str) return PCACHE[id].v;
+  var v = null;
+  try {
+    var o = JSON.parse(str);
+    if (o.pset && o.pset.on && o.pset.share) v = { pl: o.pl || [], pset: o.pset };
+  } catch (e) {}
+  PCACHE[id] = { s: str, v: v };
+  return v;
+}
+function perAlerts() {
+  var h = "";
+  if (RO) return h;
+  Object.keys(others || {}).forEach(function (id) {
+    var p = periodOf(id);
+    if (!p) return;
+    var n = perNow(p.pl, p.pset, true, names[id]);
+    if (n.show)
+      h +=
+        '<div class="item row"><div class="ico">💗</div><div class="sp">' + esc(n.text) + '<div class="mute">' + esc(n.tip) +
+        '</div></div><button class="chip" data-pics="' + esc(id) + '">加入日历</button></div>';
+  });
+  return h;
+}
+function perToast() {
+  if (RO || cur !== "mine" || !(S.pset && S.pset.on)) return;
+  var n = perNow(S.pl, S.pset, false),
+    t = today();
+  try {
+    if (!n.show || localStorage.getItem("ledger.pertoast") === t) return;
+    localStorage.setItem("ledger.pertoast", t);
+  } catch (e) {}
+  if (n.show) toast("💗 " + n.text);
+}
+function icsBuild(P, ps, partner, name) {
+  var C = perCalc(P, ps),
+    dd = Math.max(1, +ps.days || 2),
+    stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+/, ""),
+    L = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Ledger//Period//ZH", "CALSCALE:GREGORIAN", "METHOD:PUBLISH"],
+    title = partner ? "💗 " + (name || "她") + " 的经期预计开始" : "💗 经期预计开始",
+    tip = partner ? "多体谅，备好暖宝宝和热饮" : "记得备好用品，注意保暖";
+  function d8(x) {
+    return x.replace(/-/g, "");
+  }
+  C.starts.forEach(function (s) {
+    L.push(
+      "BEGIN:VEVENT", "UID:period-" + s + (partner ? "-p" : "") + "@ledger", "DTSTAMP:" + stamp,
+      "DTSTART;VALUE=DATE:" + d8(s), "DTEND;VALUE=DATE:" + d8(addDays(s, C.len)), "SUMMARY:" + title,
+      "DESCRIPTION:" + tip + "（按记录估算，仅供参考）",
+      "BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:" + title + "，" + dd + " 天后", "TRIGGER:-PT" + (dd * 24 - 9) + "H", "END:VALARM",
+      "BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:" + title + "，就在今天", "TRIGGER:PT9H", "END:VALARM",
+      "END:VEVENT",
+    );
+  });
+  L.push("END:VCALENDAR");
+  return L.join("\r\n") + "\r\n";
+}
+async function perExport(P, ps, partner, name) {
+  if (!perCalc(P, ps).starts.length) return toast("先记录一次经期，才能预测");
+  try {
+    var dl2 = await claude.use("downloads");
+    await dl2.save({ filename: partner ? "her-period.ics" : "period.ics", data: new Blob([icsBuild(P, ps, partner, name)], { type: "text/calendar" }) });
+    toast("已导出：打开文件选「添加到日历」，手机日历就会按时提醒");
+  } catch (e) {
+    toast("导出失败");
+  }
+}
+function perAdd(d) {
+  mark();
+  S.pl.push({ id: uid(), start: d });
+  save();
+  render();
+  showUndo("已记录：" + perMD(d) + " 经期开始");
+}
+function perDaySheet(d) {
+  var td = today(),
+    C = perCalc(S.pl, S.pset, td),
+    hit = C.logs.find(function (x) { return d >= x.start && d <= (x.end || addDays(x.start, C.len - 1)); }),
+    open = !hit && C.logs.slice().reverse().find(function (x) { return !x.end && x.start < d && dayDiff(x.start, d) <= 14; }),
+    r = perDay(C, d, td),
+    tags = [];
+  if (r.act) tags.push("经期");
+  if (r.pred) tags.push("预测经期");
+  if (r.ovu) tags.push("预测排卵日");
+  if (r.fer) tags.push("易孕期（估算）");
+  if (r.pms) tags.push("经前期（PMS）");
+  var m = openSheet(
+    "<b>" + perMD(d) + '</b><div class="mute" style="margin:4px 0 10px">' + (tags.join(" · ") || "普通日子") + "</div>" +
+      (d > td
+        ? '<div class="mute">未来的日子不能记录</div>'
+        : (hit ? '<button class="btn" id="e1">这天经期结束了</button><button class="btn ghost" id="e2">删除这条记录</button>' : "") +
+          (open ? '<button class="btn" id="e3">这天经期结束了</button>' : "") +
+          (hit ? "" : '<button class="btn" id="e4">🩸 这天经期开始</button>')),
+  );
+  function done(msg, fn) {
+    mark();
+    fn();
+    save();
+    m.remove();
+    render();
+    showUndo(msg);
+  }
+  var q = function (x) { return m.querySelector(x); };
+  if (q("#e1")) q("#e1").onclick = function () { done("已设为结束", function () { hit.end = d < hit.start ? hit.start : d; }); };
+  if (q("#e2")) q("#e2").onclick = function () { done("已删除", function () { S.pl = S.pl.filter(function (x) { return x.id !== hit.id; }); }); };
+  if (q("#e3")) q("#e3").onclick = function () { done("已设为结束", function () { open.end = d; }); };
+  if (q("#e4")) q("#e4").onclick = function () { m.remove(); perAdd(d); };
+}
+function perLogSheet(id) {
+  var x = S.pl.find(function (y) { return y.id === id; });
+  if (!x) return;
+  var m = openSheet(
+    '<b>修改记录</b><label>开始日期</label><input id="ls" type="date" value="' + x.start + '"><label>结束日期（还没结束就留空）</label><input id="le" type="date" value="' +
+      (x.end || "") + '"><button class="btn" id="ok">保存</button><button class="btn ghost" id="del">删除这条记录</button>',
+  );
+  m.querySelector("#ok").onclick = function () {
+    var s0 = m.querySelector("#ls").value,
+      e0 = m.querySelector("#le").value;
+    if (!s0) return toast("请选开始日期");
+    if (e0 && e0 < s0) return toast("结束日期不能早于开始日期");
+    mark();
+    x.start = s0;
+    x.end = e0 || undefined;
+    save();
+    m.remove();
+    render();
+  };
+  m.querySelector("#del").onclick = function () {
+    mark();
+    S.pl = S.pl.filter(function (y) { return y.id !== id; });
+    save();
+    m.remove();
+    render();
+    showUndo("已删除");
+  };
+}
+function periodPage() {
+  var ps = S.pset || {},
+    td = today(),
+    N = perNow(S.pl, ps, false),
+    C = N.C,
+    h = '<div class="card"><h1>💗 经期</h1><div class="big" style="font-size:26px">' + esc(N.text) + "</div>" + (N.tip ? '<div class="mute">' + esc(N.tip) + "</div>" : "");
+  if (C.last)
+    h += '<div class="mute" style="margin-top:6px">平均周期 ' + C.cycle + " 天" + (C.auto ? "（按记录算出）" : "（默认值，记几次后自动算）") + " · 经期约 " + C.len + " 天</div>";
+  h +=
+    C.kind === "in" && !C.last.end
+      ? '<button class="btn" id="pend">✅ 今天结束了</button>'
+      : C.kind === "in"
+      ? ""
+      : '<button class="btn" id="pnow">🩸 今天来了（记录开始）</button>';
+  h += "</div>";
+  // 日历
+  var y = perMon.getFullYear(),
+    mo = perMon.getMonth(),
+    first = new Date(y, mo, 1),
+    nd = new Date(y, mo + 1, 0).getDate(),
+    cells = "";
+  for (var b = 0; b < (first.getDay() + 6) % 7; b++) cells += "<span></span>";
+  for (var d = 1; d <= nd; d++) {
+    var key = y + "-" + String(mo + 1).padStart(2, "0") + "-" + String(d).padStart(2, "0"),
+      r = perDay(C, key, td),
+      st = "background:none;color:var(--ink)";
+    if (r.act) st = "background:var(--acc);color:#fff";
+    else if (r.pred) st = "background:var(--accbg);color:var(--acc);border:1px dashed var(--acc)";
+    else if (r.ovu) st = "background:#2f9e6e;color:#fff";
+    else if (r.fer) st = "background:rgba(47,158,110,.2);color:var(--ink)";
+    else if (r.pms) st = "background:rgba(155,93,229,.18);color:var(--ink)";
+    cells +=
+      '<button data-pd="' + key + '" style="aspect-ratio:1;border-radius:12px;border:0;font:inherit;font-size:14px;cursor:pointer;' + st +
+      (key === td ? ";box-shadow:inset 0 0 0 2px var(--ink)" : "") + '">' + d + "</button>";
+  }
+  h +=
+    '<div class="card"><div class="mnav"><button data-pnav="-1" aria-label="上个月">‹</button><b>' + y + "年" + (mo + 1) + '月</b><button data-pnav="1" aria-label="下个月">›</button></div>' +
+    '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;text-align:center" class="mute">' +
+    ["一", "二", "三", "四", "五", "六", "日"].map(function (x) { return "<span>" + x + "</span>"; }).join("") +
+    '</div><div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:4px">' + cells + "</div>" +
+    '<div class="mute" style="margin-top:10px;line-height:1.9"><span style="background:var(--acc);color:#fff;border-radius:4px;padding:0 6px">经期</span> ' +
+    '<span style="border:1px dashed var(--acc);color:var(--acc);border-radius:4px;padding:0 6px">预测</span> ' +
+    '<span style="background:rgba(155,93,229,.18);border-radius:4px;padding:0 6px">经前 PMS</span> ' +
+    '<span style="background:rgba(47,158,110,.2);border-radius:4px;padding:0 6px">易孕期</span> ' +
+    '<span style="background:#2f9e6e;color:#fff;border-radius:4px;padding:0 6px">排卵日</span><br>点某一天可以记录开始 / 结束</div></div>';
+  // 记录
+  if (C.logs.length)
+    h +=
+      '<div class="card"><b>最近记录</b>' +
+      C.logs
+        .slice(-6)
+        .reverse()
+        .map(function (x) {
+          var i = C.logs.indexOf(x),
+            gap = i > 0 ? dayDiff(C.logs[i - 1].start, x.start) : 0;
+          return (
+            '<div class="item row" data-plog="' + x.id + '" style="cursor:pointer"><span class="sp">' + perMD(x.start) + (x.end ? " – " + perMD(x.end) : " – 进行中") +
+            '<div class="mute">' + (x.end ? dayDiff(x.start, x.end) + 1 + " 天" : "") + (gap ? (x.end ? " · " : "") + "距上次 " + gap + " 天" : "") + "</div></span><span class=\"mute\">›</span></div>"
+          );
+        })
+        .join("") +
+      "</div>";
+  // 设置
+  h +=
+    '<div class="card"><b>设置</b><label>默认周期（天）· 记几次之后会自动用平均值</label><input type="number" inputmode="numeric" data-pset="cycle" value="' + (+ps.cycle || 28) +
+    '"><label>默认经期天数</label><input type="number" inputmode="numeric" data-pset="len" value="' + (+ps.len || 5) +
+    '"><label>提前几天提醒</label><input type="number" inputmode="numeric" data-pset="days" value="' + (+ps.days || 2) +
+    '"><label style="display:flex;gap:8px;align-items:center;color:var(--ink);margin-top:14px"><input type="checkbox" id="pshare" style="width:auto"' + (ps.share ? " checked" : "") +
+    "> 和男朋友共享预测（他的首页会提醒，关闭后不再上传）</label>" +
+    '<button class="btn" id="pics" style="margin-top:12px">📅 导出到手机日历（提前提醒）</button>' +
+    '<div class="mute" style="margin-top:10px">预测只是根据记录估算，不能用来避孕或判断健康问题；周期很不规律或延迟很久，请咨询医生。' +
+    (ps.share ? "" : "<br>没有共享时，经期记录只存在这台手机，换手机前请先「更多 → 备份」导出。") + "</div></div>";
+  return h;
+}
 function expIn(a, b) {
   var v = 0;
   S.tx.forEach(function (t) {
@@ -1312,6 +1655,7 @@ function expIn(a, b) {
 var PAL = ["#e8506b", "#9b5de5", "#f15bb5", "#00bbf9", "#00c48c", "#fcb900", "#ff8a5c", "#6c757d", "#7a6bd6", "#2f9e6e"];
 function billF(t) {
   if (fF === "all") return true;
+  if (fF === "q") return !!t.q;
   return fF.indexOf("t:") === 0 ? t.type === fF.slice(2) : t.cat === fF.slice(2);
 }
 function fOpts() {
@@ -1319,7 +1663,7 @@ function fOpts() {
     return '<option value="' + esc(v) + '"' + (fF === v ? " selected" : "") + ">" + esc(l) + "</option>";
   }
   return (
-    o("all", "全部类型和分类") + o("t:expense", "仅支出") + o("t:income", "仅收入") + o("t:transfer", "仅转账") +
+    o("all", "全部类型和分类") + o("q", "❓ 有疑问") + o("t:expense", "仅支出") + o("t:income", "仅收入") + o("t:transfer", "仅转账") +
     '<optgroup label="支出分类">' + S.cats.expense.map(function (c) { return o("c:" + c, c); }).join("") +
     '</optgroup><optgroup label="收入分类">' + S.cats.income.map(function (c) { return o("c:" + c, c); }).join("") + "</optgroup>"
   );
@@ -1403,6 +1747,7 @@ function home() {
     fmt(m.i - m.e) +
     "</div></div></div>" +
     periodCard() +
+    perHomeCard() +
     todayCard() +
     askCard() +
     annCard() +
@@ -1891,6 +2236,7 @@ function settings() {
   });
   return (
     h +
+    perSetCard() +
     tripCard() +
     carCard() +
     more() +
@@ -2186,6 +2532,16 @@ function alerts() {
     h +=
       '<div class="item row"><div class="ico">✈️</div><div class="sp">旅行中：' + esc(S.trip.name) +
       '<div class="mute">已花 ' + fmt(tripTotal(S.trip.name)) + "</div></div></div>";
+  h += perAlerts();
+  if (!RO)
+    ((cur === "joint" ? S.tx : (JOINT && JOINT.tx) || []).filter(function (t) { return t.q && t.q.by !== myId; }))
+      .slice(0, 3)
+      .forEach(function (t) {
+        h +=
+          '<div class="item row"><div class="ico">❓</div><div class="sp">' + esc(t.q.who || "对方") + " 对一笔账有疑问" +
+          '<div class="mute">' + esc(t.cat + " · " + fmt(t.amt) + " · " + t.date + (t.q.text ? "：" + t.q.text : "")) +
+          '</div></div><button class="chip on" data-qgo="' + t.id + '">查看</button></div>';
+      });
   if (!RO && cur === "mine")
     S.cars.forEach(function (c) {
       (c.items || []).forEach(function (it) {
@@ -3064,6 +3420,10 @@ function lsGet() {
 function ser(o) {
   var c = JSON.parse(JSON.stringify(o || S));
   delete c.pin;
+  if (!(c.pset && c.pset.share)) {
+    delete c.pl;
+    delete c.pset;
+  }
   if (c.tx)
     c.tx.forEach(function (t) {
       delete t.img;
@@ -3255,7 +3615,7 @@ function chatListHtml() {
     }
     h +=
       '<div class="cm ' + (mine ? "r" : "l") + '"><div class="bub ' + (mine ? "me" : "pe") + '" data-cm="' + m.id + '">' +
-      (m.d ? '<i style="opacity:.7">消息已撤回</i>' : esc(m.x)) + '</div><div class="cmeta">' +
+      (m.d ? '<i style="opacity:.7">消息已撤回</i>' : chatCard(m.c, m.x) + (m.x ? esc(m.x) : "")) + '</div><div class="cmeta">' +
       p2(d.getHours()) + ":" + p2(d.getMinutes()) +
       (mine ? (m.p ? " · 发送中…" : m.id === lastRead ? " · 已读" : "") : "") + "</div></div>";
   });
@@ -3329,20 +3689,52 @@ function chatBind() {
   chatScroll();
   chatSeen();
 }
-function chatSend(x) {
+function chatSend(x, c) {
   x = String(x || "").trim();
-  if (!x || !myId) return;
+  if ((!x && !c) || !myId) return;
   var m = { id: uid(), a: myId, t: Date.now(), x: x.slice(0, 1000), p: 1 };
+  if (c) m.c = c;
   CH.msgs[m.id] = m;
   saveChat();
   chatDraw(true);
   chatPush();
+}
+function cardOf(t) {
+  return { cat: t.cat, sub: t.sub, amt: +t.amt || 0, cur: (acc(t.acc) || {}).cur, date: t.date, note: t.note || "", type: t.type };
+}
+function chatCard(c, hasText) {
+  if (!c) return "";
+  return (
+    '<div style="background:rgba(127,127,127,.16);border-radius:12px;padding:8px 10px;' + (hasText ? "margin-bottom:6px" : "") +
+    '"><div style="font-size:12px;opacity:.85">📒 ' + esc(c.cat || "") + (c.sub ? " · " + esc(c.sub) : "") +
+    '</div><div style="font-size:20px;font-weight:800">' + (c.type === "income" ? "+" : "") + fmt(c.amt, c.cur) +
+    '</div><div style="font-size:12px;opacity:.85">' + esc(c.date || "") + (c.note ? " · " + esc(c.note) : "") + "</div></div>"
+  );
+}
+function shareToChat(t) {
+  var c = cardOf(t),
+    m = openSheet(
+      '<b>💬 发到聊天</b><div class="card" style="box-shadow:none">' + chatCard(c) +
+        '</div><label>想说点什么？（可不填）</label><input id="sc2" placeholder="例如：这笔是什么呀？"><button class="btn" id="ok">发送</button>',
+    );
+  m.querySelector("#ok").onclick = function () {
+    chatSend(m.querySelector("#sc2").value, c);
+    document.querySelectorAll(".mask").forEach(function (x) { x.remove(); });
+    tab = "chat";
+    render();
+  };
+}
+// ---------- 账单「有疑问」标记（共同账本）----------
+function qNotify(r) {
+  if (!chatOn()) return;
+  chatSend("❓ 这笔有疑问" + (r.q.text ? "：" + r.q.text : ""), cardOf(r));
 }
 function chatRecall(id) {
   var m = CH.msgs[id];
   if (!m || m.a !== myId) return;
   m.d = 1;
   m.x = "";
+  m.c = undefined;
   saveChat();
   chatDraw();
   chatPush();
@@ -3363,7 +3755,7 @@ function chatPush() {
       }
       Object.keys(CH.msgs).forEach(function (k) {
         var m = CH.msgs[k];
-        if (m.a === myId) mine[k] = { id: m.id, t: m.t, x: m.d || (mine[k] && mine[k].d) ? "" : m.x, d: m.d || (mine[k] && mine[k].d) || undefined };
+        if (m.a === myId) mine[k] = { id: m.id, t: m.t, x: m.d || (mine[k] && mine[k].d) ? "" : m.x, d: m.d || (mine[k] && mine[k].d) || undefined, c: m.d || (mine[k] && mine[k].d) ? undefined : m.c };
       });
       var arr = Object.keys(mine)
         .map(function (k) {
@@ -3394,7 +3786,7 @@ function chatMerge(id, data, fresh) {
   }
   (o.m || []).forEach(function (m) {
     if (!CH.msgs[m.id] && id !== myId && !m.d) fresh.push(m);
-    CH.msgs[m.id] = { id: m.id, a: id, t: m.t, x: m.x, d: m.d };
+    CH.msgs[m.id] = { id: m.id, a: id, t: m.t, x: m.x, d: m.d, c: m.c };
   });
   if (id !== myId) {
     CH.peer = id;
@@ -3414,7 +3806,7 @@ function chatSub(ms) {
     saveChat();
     updateBadge();
     if (tab === "chat") chatDraw();
-    else if (fresh.length) toast("💬 " + (CH.pname || "对方") + "：" + fresh[fresh.length - 1].x.slice(0, 30));
+    else if (fresh.length) toast("💬 " + (CH.pname || "对方") + "：" + (fresh[fresh.length - 1].x || "📒 发来一笔账单").slice(0, 30));
   }, ms);
 }
 setInterval(function () {
@@ -5054,6 +5446,7 @@ function txSheet(edit, pre) {
     alert("请先添加一个账户");
     return;
   }
+  var qWas = !!(edit && edit.q);
   var st = { type: t.type, cat: t.cat };
   var m = openSheet("");
   var sh = m.querySelector(".sheet");
@@ -5136,6 +5529,7 @@ function txSheet(edit, pre) {
           subF()) +
       aaF(t.aa, st.type, t.pay) +
       spF() +
+      qF() +
       fuelF() +
       pF(t.p) +
       gF(t) +
@@ -5148,6 +5542,7 @@ function txSheet(edit, pre) {
       '<button class="btn" id="ok">' +
       (edit ? "保存修改" : "保存") +
       "</button>" +
+      (edit && chatOn() ? '<button class="btn ghost" style="color:var(--acc)" id="tochat">💬 发到聊天</button>' : "") +
       (edit
         ? '<button class="btn ghost" id="del">删除这笔</button>'
         : '<button class="btn ghost" style="color:var(--acc)" id="fv">⭐ 存为常用</button>');
@@ -5290,6 +5685,16 @@ function txSheet(edit, pre) {
     });
     return h + '<button class="btn" id="sprv" style="margin-top:10px;background:var(--card);color:var(--acc);box-shadow:none;border:1px solid var(--acc)">💸 对方还钱了</button></div>';
   }
+  function qF() {
+    if (cur !== "joint" || !edit) return "";
+    var q = t.q;
+    if (!q) return '<button class="chip" id="qset" style="margin:8px 0">❓ 标记有疑问（通知对方）</button>';
+    return (
+      '<div class="card" style="margin:8px 0;background:var(--accbg);box-shadow:none"><b>❓ ' + esc(q.who || "有疑问") +
+      ' 标记了有疑问</b><label>想问什么（选填）</label><input id="qtext" value="' + esc(q.text || "") +
+      '" placeholder="例如：这是什么？"><button class="btn" id="qdone" style="margin-top:10px;background:var(--card);color:var(--acc);box-shadow:none;border:1px solid var(--acc)">✅ 已解决，取消标记</button></div>'
+    );
+  }
   function fuelF() {
     if (cur !== "mine" || st.type !== "expense" || st.cat !== "油费") return "";
     if (!S.cars.length) return '<button class="chip" id="fnew" style="margin:8px 0">🚗 添加车辆，记录里程和油耗</button>';
@@ -5344,6 +5749,8 @@ function txSheet(edit, pre) {
     t.fee = g("fee");
     t.toAmt = g("ta");
     t.myr = g("myr");
+    var qt2 = sh.querySelector("#qtext");
+    if (qt2 && t.q) t.q.text = qt2.value;
     var fc = sh.querySelector("#fcar");
     if (fc) {
       t.car = fc.value;
@@ -5443,6 +5850,17 @@ function txSheet(edit, pre) {
       keep();
       t.sub = t.sub === b.dataset.sub ? undefined : b.dataset.sub;
       draw();
+    } else if (b.id === "tochat") {
+      keep();
+      shareToChat(edit);
+    } else if (b.id === "qset") {
+      keep();
+      t.q = { by: myId, who: myName, t: Date.now(), text: "" };
+      draw();
+    } else if (b.id === "qdone") {
+      keep();
+      t.q = undefined;
+      draw();
     } else if (b.id === "fnew") {
       keep();
       carNew(function () {
@@ -5538,6 +5956,7 @@ function txSheet(edit, pre) {
         gift: cur === "mine" && t.gift ? 1 : undefined,
         gd: cur === "mine" && t.gift && t.gd ? t.gd : undefined,
         trip: edit ? edit.trip : S.trip ? S.trip.name : undefined,
+        q: cur === "joint" ? t.q : undefined,
         img: cur === "mine" ? t.img : undefined,
         sub:
           st.type !== "transfer" && ((S.sub || {})[st.cat] || []).indexOf(t.sub) >= 0
@@ -5552,6 +5971,10 @@ function txSheet(edit, pre) {
       var fa0 = acc(t.acc),
         mv = parseFloat(t.myr);
       if (st.type !== "transfer" && fa0 && fa0.cur !== "MYR" && mv > 0) rec.myr = mv;
+      if (rec.q && !qWas)
+        setTimeout(function () {
+          qNotify(rec);
+        }, 0);
       if (cur === "mine" && st.type === "expense" && st.cat === "油费" && S.cars.length) {
         var fcid = S.cars.some(function (x) { return x.id === t.car; }) ? t.car : S.cars[0].id,
           fo = parseFloat(t.odo),
@@ -5613,7 +6036,7 @@ function txSheet(edit, pre) {
 
 document.addEventListener("click", function (e) {
   var el = e.target.closest(
-    "[data-tab],[data-go],[data-tx],[data-acc],[data-m],[data-hm],[data-sprecv],[data-car],[data-sm],[data-sn],[data-sd],[data-base],[data-addcat],[data-delcat],[data-bk],[data-act]",
+    "[data-tab],[data-go],[data-tx],[data-acc],[data-m],[data-hm],[data-sprecv],[data-car],[data-qgo],[data-pd],[data-pnav],[data-plog],[data-pics],[data-sm],[data-sn],[data-sd],[data-base],[data-addcat],[data-delcat],[data-bk],[data-act]",
   );
   if (e.target.id === "cam") {
     document.getElementById("shot").click();
@@ -5621,6 +6044,25 @@ document.addEventListener("click", function (e) {
   }
   if (e.target.id === "fab") {
     plusMenu();
+    return;
+  }
+  if (e.target.id === "pnow") {
+    perAdd(today());
+    return;
+  }
+  if (e.target.id === "pend") {
+    var pc0 = perCalc(S.pl, S.pset).last;
+    if (pc0) {
+      mark();
+      pc0.end = today();
+      save();
+      render();
+      showUndo("已记录：经期结束");
+    }
+    return;
+  }
+  if (e.target.id === "pics") {
+    perExport(S.pl, S.pset || {}, false);
     return;
   }
   if (e.target.id === "carnew") {
@@ -5715,6 +6157,22 @@ document.addEventListener("click", function (e) {
     backTo = "";
     tab = el.dataset.tab;
     render();
+  } else if (el.dataset.pd) {
+    perDaySheet(el.dataset.pd);
+  } else if (el.dataset.pnav) {
+    perMon = new Date(perMon.getFullYear(), perMon.getMonth() + +el.dataset.pnav, 1);
+    render();
+  } else if (el.dataset.plog) {
+    perLogSheet(el.dataset.plog);
+  } else if (el.dataset.pics) {
+    var pp = periodOf(el.dataset.pics);
+    if (pp) perExport(pp.pl, pp.pset, true, names[el.dataset.pics]);
+  } else if (el.dataset.qgo) {
+    if (cur !== "joint") sw("joint");
+    var qt = S.tx.find(function (x) {
+      return x.id === el.dataset.qgo;
+    });
+    if (qt) txSheet(JSON.parse(JSON.stringify(qt)));
   } else if (el.dataset.car) {
     carSheet(el.dataset.car);
   } else if (el.dataset.sprecv) {
@@ -5803,6 +6261,29 @@ document.addEventListener("change", function (e) {
     trendCat = e.target.value;
     render();
   }
+  if (e.target.id === "pon2") {
+    S.pset = Object.assign({ cycle: 28, len: 5, days: 2, share: false }, S.pset || {}, { on: e.target.checked });
+    save();
+    render();
+  }
+  if (e.target.id === "pshare") {
+    if (e.target.checked && !confirm("开启后，经期记录会加密上传到你们共用的同步空间，男朋友可以看到预测和提醒。确定吗？")) {
+      e.target.checked = false;
+      return;
+    }
+    S.pset.share = e.target.checked;
+    save();
+    render();
+  }
+  if (e.target.dataset.pset) {
+    var pv = parseFloat(e.target.value);
+    if (pv > 0 && S.pset) {
+      S.pset[e.target.dataset.pset] = Math.round(pv);
+      save();
+      render();
+    }
+  }
+
   if (e.target.id === "fa") {
     fAcc = e.target.value;
     render();
@@ -5843,6 +6324,7 @@ autoReveal();
 render();
 imgMigrate();
 imgGC();
+perToast();
 try {
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
 } catch (e) {}
