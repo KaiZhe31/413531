@@ -199,6 +199,7 @@ function migrate() {
   }
   S.cars = S.cars || [];
   S.pl = S.pl || [];
+  S.loans = S.loans || [];
   S.fav = S.fav || [];
   // 第一次用快速记账时放 3 个示例模板（可在「快速记账 → 管理模板」里改 / 删）
   if (!S.mig.qk && cur !== "joint" && cur !== "other") {
@@ -354,6 +355,15 @@ function balance(a) {
       if (t.acc === a.id) b -= t.amt + (t.fee || 0);
       if (t.to === a.id) b += t.toAmt != null ? t.toAmt : t.amt;
     }
+  });
+  (S.loans || []).forEach(function (l) {
+    var lc = loanCur(l);
+    if (l.acc === a.id) b += l.dir === "borrow" ? l.amt : -l.amt;
+    (l.pays || []).forEach(function (p) {
+      if ((p.acc || l.acc) !== a.id) return;
+      var v = a.cur && lc && a.cur !== lc ? conv(p.amt, lc, a.cur) : p.amt;
+      b += l.dir === "borrow" ? -v : v;
+    });
   });
   return b;
 }
@@ -703,6 +713,8 @@ function render() {
   else if (tab === "stats") h = stats();
   else if (tab === "chat") h = chatPage();
   else if (tab === "period") h = periodPage();
+  else if (tab === "loans") h = loansPage();
+  else if (tab === "subs") h = subsPage();
   else h = settings();
   if (0)
     h =
@@ -1411,6 +1423,8 @@ function perNow(P, ps, partner, name) {
     o.tip = C.days <= 5 ? (partner ? "快到了，她的情绪可能起伏，多一点耐心和温柔" : "快到经期了，可能情绪起伏或小腹不适，提前备好用品") : "";
     o.show = C.days <= dd;
   }
+  var sk = C.kind === "in" ? "in" : C.kind === "today" ? "today" : C.kind === "late" ? "late" : "before";
+  if (partner && o.tip && ps.msg && ps.msg[sk]) o.tip = ps.msg[sk];
   return o;
 }
 function perHomeCard() {
@@ -1468,23 +1482,26 @@ function perToast() {
   } catch (e) {}
   if (n.show) toast("💗 " + n.text);
 }
+function icsEsc(t) {
+  return String(t == null ? "" : t).replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+}
 function icsBuild(P, ps, partner, name) {
   var C = perCalc(P, ps),
     dd = Math.max(1, +ps.days || 2),
     stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+/, ""),
     L = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Ledger//Period//ZH", "CALSCALE:GREGORIAN", "METHOD:PUBLISH"],
     title = partner ? "💗 " + (name || "她") + " 的经期预计开始" : "💗 经期预计开始",
-    tip = partner ? "多体谅，备好暖宝宝和热饮" : "记得备好用品，注意保暖";
+    tip = partner ? (ps.msg && ps.msg.before) || "多体谅，备好暖宝宝和热饮" : "记得备好用品，注意保暖";
   function d8(x) {
     return x.replace(/-/g, "");
   }
   C.starts.forEach(function (s) {
     L.push(
       "BEGIN:VEVENT", "UID:period-" + s + (partner ? "-p" : "") + "@ledger", "DTSTAMP:" + stamp,
-      "DTSTART;VALUE=DATE:" + d8(s), "DTEND;VALUE=DATE:" + d8(addDays(s, C.len)), "SUMMARY:" + title,
-      "DESCRIPTION:" + tip + "（按记录估算，仅供参考）",
-      "BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:" + title + "，" + dd + " 天后", "TRIGGER:-PT" + (dd * 24 - 9) + "H", "END:VALARM",
-      "BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:" + title + "，就在今天", "TRIGGER:PT9H", "END:VALARM",
+      "DTSTART;VALUE=DATE:" + d8(s), "DTEND;VALUE=DATE:" + d8(addDays(s, C.len)), "SUMMARY:" + icsEsc(title),
+      "DESCRIPTION:" + icsEsc(tip + "（按记录估算，仅供参考）"),
+      "BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:" + icsEsc(title) + "，" + dd + " 天后", "TRIGGER:-PT" + (dd * 24 - 9) + "H", "END:VALARM",
+      "BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:" + icsEsc(title) + "，就在今天", "TRIGGER:PT9H", "END:VALARM",
       "END:VEVENT",
     );
   });
@@ -1637,12 +1654,281 @@ function periodPage() {
     '<div class="card"><b>设置</b><label>默认周期（天）· 记几次之后会自动用平均值</label><input type="number" inputmode="numeric" data-pset="cycle" value="' + (+ps.cycle || 28) +
     '"><label>默认经期天数</label><input type="number" inputmode="numeric" data-pset="len" value="' + (+ps.len || 5) +
     '"><label>提前几天提醒</label><input type="number" inputmode="numeric" data-pset="days" value="' + (+ps.days || 2) +
-    '"><label style="display:flex;gap:8px;align-items:center;color:var(--ink);margin-top:14px"><input type="checkbox" id="pshare" style="width:auto"' + (ps.share ? " checked" : "") +
+    '"><div style="margin-top:16px"><b>想对他说的话</b></div><div class="mute">共享后他在首页看到的就是你写的这些；留空就用默认提示</div>' +
+    [
+      ["before", "快到经期时（PMS）", "例如：想喝热奶茶🧋，想被抱抱，别惹我😤"],
+      ["in", "经期中", "例如：肚子疼，帮我买暖宝宝和红糖姜茶"],
+      ["today", "预计今天开始", "例如：可能今天来，帮我备着"],
+      ["late", "推迟了", "例如：别催我，我自己会留意"],
+    ]
+      .map(function (x) {
+        return "<label>" + x[1] + '</label><input data-pmsg="' + x[0] + '" maxlength="60" placeholder="' + x[2] + '" value="' + esc((ps.msg || {})[x[0]] || "") + '">';
+      })
+      .join("") +
+    '<label style="display:flex;gap:8px;align-items:center;color:var(--ink);margin-top:14px"><input type="checkbox" id="pshare" style="width:auto"' + (ps.share ? " checked" : "") +
     "> 和男朋友共享预测（他的首页会提醒，关闭后不再上传）</label>" +
     '<button class="btn" id="pics" style="margin-top:12px">📅 导出到手机日历（提前提醒）</button>' +
     '<div class="mute" style="margin-top:10px">预测只是根据记录估算，不能用来避孕或判断健康问题；周期很不规律或延迟很久，请咨询医生。' +
     (ps.share ? "" : "<br>没有共享时，经期记录只存在这台手机，换手机前请先「更多 → 备份」导出。") + "</div></div>";
   return h;
+}
+// ---------- 🤝 借还款 ----------
+// S.loans = [{ id, dir: "lend"(我借给别人) | "borrow"(别人借给我), who, amt, acc, date, due?, note?, pays: [{ amt, acc, date }] }]
+// 借出 / 借入会让账户余额增减，但不算支出或收入；还款再把钱加回来 / 扣掉
+function loanPaid(l) {
+  var v = 0;
+  (l.pays || []).forEach(function (p) {
+    v += +p.amt || 0;
+  });
+  return v;
+}
+function loanLeft(l) {
+  return Math.max(0, l.amt - loanPaid(l));
+}
+function loanCur(l) {
+  var a = acc(l.acc);
+  return a ? a.cur : S.base;
+}
+function loanAccOpts(sel) {
+  return (
+    '<option value="">不影响账户</option>' +
+    S.accounts
+      .filter(function (a) { return !a.hide; })
+      .map(function (a) { return '<option value="' + a.id + '"' + (a.id === sel ? " selected" : "") + ">" + esc(a.name) + " (" + a.cur + ")</option>"; })
+      .join("")
+  );
+}
+function loanSheet(id) {
+  var l = id ? S.loans.find(function (x) { return x.id === id; }) : null;
+  if (id && !l) return;
+  var f = l || { dir: "lend", who: "", amt: "", acc: defAcc(), date: today(), due: "", note: "" },
+    m = openSheet(
+      "<b>" + (l ? "修改借还款" : "记一笔借还款") + '</b><label>类型</label><select id="ld"><option value="lend">我借给别人（别人欠我）</option><option value="borrow">别人借给我（我欠别人）</option></select>' +
+        '<label>对方名字</label><input id="lw" value="' + esc(f.who) + '"><label>金额</label><input id="la" type="number" inputmode="decimal" step="0.01" value="' + esc(f.amt) +
+        '"><label>钱从哪个账户出 / 进</label><select id="lc">' + loanAccOpts(f.acc) + '</select><label>日期</label><input id="lt" type="date" value="' + esc(f.date) +
+        '"><label>约定还款日（选填）</label><input id="lu" type="date" value="' + esc(f.due || "") + '"><label>备注（选填）</label><input id="ln" value="' + esc(f.note || "") +
+        '"><button class="btn" id="ok">保存</button>' + (l ? '<button class="btn ghost" id="del">删除这笔</button>' : ""),
+    ),
+    q = function (x) { return m.querySelector(x); };
+  q("#ld").value = f.dir === "borrow" ? "borrow" : "lend";
+  q("#ok").onclick = function () {
+    var o = {
+      dir: q("#ld").value, who: q("#lw").value.trim(), amt: parseFloat(q("#la").value), acc: q("#lc").value,
+      date: q("#lt").value || today(), due: q("#lu").value || undefined, note: q("#ln").value.trim() || undefined,
+    };
+    if (!o.who) return toast("请填对方名字");
+    if (!(o.amt > 0)) return toast("请填金额");
+    mark();
+    if (l) Object.assign(l, o);
+    else S.loans.push(Object.assign({ id: uid(), pays: [] }, o));
+    save();
+    m.remove();
+    render();
+    showUndo(l ? "已修改" : "已记录");
+  };
+  if (l)
+    q("#del").onclick = function () {
+      if (!confirm("删除这笔借还款？账户余额会回到没有这笔之前")) return;
+      mark();
+      S.loans = S.loans.filter(function (x) { return x.id !== id; });
+      save();
+      m.remove();
+      render();
+      showUndo("已删除");
+    };
+}
+function loanPaySheet(id) {
+  var l = S.loans.find(function (x) { return x.id === id; });
+  if (!l) return;
+  var lend = l.dir !== "borrow",
+    m = openSheet(
+      "<b>" + (lend ? "💸 收到 " : "💸 还给 ") + esc(l.who) + "</b><label>金额（" + loanCur(l) + '）</label><input id="pa" type="number" inputmode="decimal" step="0.01" value="' +
+        loanLeft(l).toFixed(2) + '"><label>' + (lend ? "收进哪个账户" : "从哪个账户还") + '</label><select id="pc">' + loanAccOpts(l.acc) +
+        '</select><label>日期</label><input id="pd" type="date" value="' + today() + '"><button class="btn" id="ok">确定</button>',
+    );
+  m.querySelector("#ok").onclick = function () {
+    var v = parseFloat(m.querySelector("#pa").value),
+      p = { amt: +v.toFixed(2), acc: m.querySelector("#pc").value, date: m.querySelector("#pd").value || today() };
+    if (!(v > 0)) return toast("请填金额");
+    if (v > loanLeft(l) + 0.005) return toast("金额超过还没结清的 " + fmt(loanLeft(l), loanCur(l)));
+    mark();
+    l.pays = (l.pays || []).concat([p]);
+    save();
+    m.remove();
+    render();
+    showUndo(loanLeft(l) <= 0.005 ? "已结清 ✓" : "已记录");
+  };
+}
+function loanAlerts() {
+  if (RO || cur !== "mine") return "";
+  var td = today(),
+    h = "";
+  (S.loans || [])
+    .filter(function (l) { return loanLeft(l) > 0.005 && l.due && dayDiff(td, l.due) <= 3; })
+    .sort(function (a, b) { return a.due < b.due ? -1 : 1; })
+    .slice(0, 4)
+    .forEach(function (l) {
+      var d = dayDiff(td, l.due),
+        lend = l.dir !== "borrow";
+      h +=
+        '<div class="item row"><div class="ico">' + (d < 0 ? "🚨" : "🤝") + '</div><div class="sp">' + esc(l.who) + (lend ? " 该还你钱了" : "：该还钱了") +
+        '<div class="mute">' + fmt(loanLeft(l), loanCur(l)) + " · " + (d < 0 ? "已逾期 " + -d + " 天" : d === 0 ? "今天到期" : d + " 天后到期") +
+        '</div></div><button class="chip on" data-lpay="' + l.id + '">' + (lend ? "收款" : "还款") + "</button></div>";
+    });
+  return h;
+}
+function loanTotals() {
+  var recv = 0,
+    owe = 0,
+    n = 0;
+  (S.loans || []).forEach(function (l) {
+    var left = loanLeft(l);
+    if (left <= 0.005) return;
+    n++;
+    var v = conv(left, loanCur(l), S.base);
+    if (l.dir === "borrow") owe += v;
+    else recv += v;
+  });
+  return { recv: recv, owe: owe, n: n };
+}
+function loanCard() {
+  if (cur !== "mine" || RO) return "";
+  var t = loanTotals();
+  return (
+    '<div class="card"><b>🤝 借还款</b><div class="mute" style="margin:4px 0 8px">' +
+    (t.n ? "别人欠我 " + fmt(t.recv) + " · 我欠别人 " + fmt(t.owe) : "借给朋友的钱、向朋友借的钱，到期提醒，还款后自动结清") +
+    '</div><button class="btn" data-go="loans">打开借还款</button></div>'
+  );
+}
+function loansPage() {
+  var L = S.loans || [],
+    td = today(),
+    open = L.filter(function (l) { return loanLeft(l) > 0.005; }),
+    done = L.filter(function (l) { return loanLeft(l) <= 0.005; }).slice(-5).reverse(),
+    t = loanTotals();
+  function row(l, isOpen) {
+    var lend = l.dir !== "borrow",
+      cu = loanCur(l),
+      d = l.due ? dayDiff(td, l.due) : null;
+    return (
+      '<div class="item"><div class="row"><div class="ico">' + (lend ? "📤" : "📥") + '</div><div class="sp"><b>' + esc(l.who) + "</b>" + (l.note ? '<span class="mute">　' + esc(l.note) + "</span>" : "") +
+      '<div class="mute">' + (lend ? "借出 " : "借入 ") + fmt(l.amt, cu) + " · " + esc(l.date) + (loanPaid(l) ? " · 已" + (lend ? "收 " : "还 ") + fmt(loanPaid(l), cu) : "") + "</div>" +
+      (isOpen ? '<div class="num" style="margin-top:2px">' + (lend ? "还欠你 " : "还要还 ") + fmt(loanLeft(l), cu) + "</div>" : '<div class="mute">✓ 已结清</div>') +
+      (isOpen && d !== null
+        ? '<div class="' + (d < 0 ? "exp" : "mute") + '" style="font-size:13px">' + (d < 0 ? "🚨 已逾期 " + -d + " 天" : d === 0 ? "今天到期" : "到期 " + perMD(l.due) + "（还有 " + d + " 天）") + "</div>"
+        : "") +
+      "</div>" + (isOpen ? '<button class="chip on" data-lpay="' + l.id + '">' + (lend ? "收款" : "还款") + "</button>" : "") +
+      '<button class="chip" data-loan="' + l.id + '">改</button></div></div>'
+    );
+  }
+  return (
+    '<div class="card"><h1>🤝 借还款</h1><div class="row" style="gap:10px"><div class="sp"><div class="mute">别人欠我</div><div class="num inc" style="font-size:20px">' + fmt(t.recv) +
+    '</div></div><div class="sp"><div class="mute">我欠别人</div><div class="num exp" style="font-size:20px">' + fmt(t.owe) + '</div></div></div>' +
+    '<button class="btn" id="loannew">＋ 记一笔借还款</button></div>' +
+    (open.length ? '<div class="card"><b>还没结清</b>' + open.map(function (l) { return row(l, true); }).join("") + "</div>" : '<div class="empty">没有未结清的借还款 🎉</div>') +
+    (done.length ? '<div class="card"><b>最近结清的</b>' + done.map(function (l) { return row(l, false); }).join("") + "</div>" : "")
+  );
+}
+// ---------- 🔁 订阅总览（按「订阅会员」分类里的记录自动算，定期账单也算）----------
+function addMonthsStr(str, n) {
+  var d = pd(str),
+    t = new Date(d.getFullYear(), d.getMonth() + n, 1);
+  t.setDate(Math.min(d.getDate(), new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate()));
+  return ds(t);
+}
+function subsCalc() {
+  var td = today(),
+    g = {};
+  S.tx.forEach(function (t) {
+    if (t.type !== "expense" || t.cat !== "订阅会员") return;
+    var k = String(t.sub || String(t.note || "").replace(/（定期）$/, "") || "未命名").trim() || "未命名";
+    (g[k] = g[k] || []).push(t);
+  });
+  return Object.keys(g).map(function (k) {
+    var ts = g[k].slice().sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; }),
+      last = ts[ts.length - 1],
+      gaps = [];
+    for (var i = 1; i < ts.length; i++) {
+      var gp = dayDiff(ts[i - 1].date, ts[i].date);
+      if (gp > 0) gaps.push(gp);
+    }
+    gaps.sort(function (a, b) { return a - b; });
+    var gap = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 30,
+      amt = cvt(last.amt, last),
+      cad, next, cycle, month;
+    if (gap <= 10) { cad = "每周"; cycle = 7; next = addDays(last.date, 7); month = (amt * 52) / 12; }
+    else if (gap <= 45) { cad = "每月"; cycle = 31; next = addMonthsStr(last.date, 1); month = amt; }
+    else if (gap <= 120) { cad = "每季度"; cycle = 92; next = addMonthsStr(last.date, 3); month = amt / 3; }
+    else if (gap >= 300 && gap <= 430) { cad = "每年"; cycle = 366; next = addMonthsStr(last.date, 12); month = amt / 12; }
+    else { cad = "每 " + gap + " 天"; cycle = gap; next = addDays(last.date, gap); month = (amt * 30.4375) / gap; }
+    return {
+      name: k, n: ts.length, last: last, amt: amt, cad: cad, next: next, days: dayDiff(td, next), month: month,
+      active: dayDiff(last.date, td) <= cycle * 2, guess: !gaps.length,
+    };
+  });
+}
+function subAlerts() {
+  if (RO || cur !== "mine") return "";
+  var h = "";
+  subsCalc()
+    .filter(function (x) { return x.active && x.days >= 0 && x.days <= 3; })
+    .sort(function (a, b) { return a.days - b.days; })
+    .slice(0, 3)
+    .forEach(function (x) {
+      h +=
+        '<div class="item row" data-go="subs" style="cursor:pointer"><div class="ico">🔁</div><div class="sp">' + esc(x.name) + " 预计 " + (x.days === 0 ? "今天" : x.days + " 天后") +
+        '续费<div class="mute">' + fmt(x.amt) + "（" + x.cad + "）</div></div></div>";
+    });
+  return h;
+}
+function subCard() {
+  if (cur !== "mine" || RO) return "";
+  var a = subsCalc().filter(function (x) { return x.active; }),
+    m = a.reduce(function (t, x) { return t + x.month; }, 0);
+  return (
+    '<div class="card"><b>🔁 订阅总览</b><div class="mute" style="margin:4px 0 8px">' +
+    (a.length ? "每月约 " + fmt(m) + "（" + a.length + " 个订阅）" : "把 Netflix、Spotify、iCloud 等记在「订阅会员」分类，这里会自动汇总") +
+    '</div><button class="btn" data-go="subs">打开订阅总览</button></div>'
+  );
+}
+function subsPage() {
+  var all = subsCalc(),
+    act = all.filter(function (x) { return x.active; }).sort(function (a, b) { return a.days - b.days; }),
+    off = all.filter(function (x) { return !x.active; }).sort(function (a, b) { return a.last.date < b.last.date ? 1 : -1; }),
+    m = act.reduce(function (t, x) { return t + x.month; }, 0);
+  function row(x, on) {
+    return (
+      '<div class="item row"><div class="ico">🔁</div><div class="sp"><b>' + esc(x.name) + '</b><div class="mute">' + x.cad + " · 上次 " + fmt(x.amt) + "（" + esc(x.last.date) + "）" +
+      (x.guess ? " · 只记过 1 次，按每月估算" : "") + "</div>" +
+      (on
+        ? '<div class="' + (x.days <= 3 ? "exp" : "mute") + '" style="font-size:13px">' + (x.days < 0 ? "应该已经续费了（" + -x.days + " 天前）" : x.days === 0 ? "预计今天续费" : "预计 " + perMD(x.next) + " 续费（还有 " + x.days + " 天）") + "</div>"
+        : '<div class="mute" style="font-size:13px">已经 ' + dayDiff(x.last.date, today()) + " 天没扣款，可能已取消</div>") +
+      '</div><span class="num">' + (on ? fmt(x.month) + "<span class=\"mute\">/月</span>" : "") + "</span></div>"
+    );
+  }
+  return (
+    '<div class="card"><h1>🔁 订阅总览</h1><div class="row" style="gap:10px"><div class="sp"><div class="mute">每月约</div><div class="num" style="font-size:22px">' + fmt(m) +
+    '</div></div><div class="sp"><div class="mute">一年约</div><div class="num" style="font-size:22px">' + fmt(m * 12) + '</div></div></div>' +
+    '<button class="btn" id="subadd">＋ 记一笔订阅</button></div>' +
+    (act.length ? '<div class="card"><b>正在订阅（' + act.length + "）</b>" + act.map(function (x) { return row(x, true); }).join("") + "</div>" : '<div class="empty">还没有订阅记录<br><span class="mute">记账时选「订阅会员」分类，细分里选 Netflix、Spotify 等</span></div>') +
+    (off.length ? '<div class="card"><b>可能已取消</b>' + off.map(function (x) { return row(x, false); }).join("") + "</div>" : "") +
+    '<div class="mute" style="padding:0 4px">按「订阅会员」分类里的记录自动算：看每次扣款的间隔判断每月 / 每年，推算下次续费日。每月自动记账的订阅也会算进来。</div>'
+  );
+}
+// ---------- 主屏幕快捷入口 ----------
+function shortcutCard() {
+  if (RO) return "";
+  var base = location.origin + location.pathname,
+    items = [["快速记账", "quick"], ["完整记账", "add"], ["聊天", "chat"]];
+  return (
+    '<div class="card"><b>⚡ 主屏幕快捷入口</b><div class="mute" style="margin:4px 0 8px">Android：长按桌面上的 App 图标，会出现「快速记账」「完整记账」「聊天」。<br>iPhone：不支持长按快捷方式，可以在 Safari 里打开下面的链接 → 分享 → 添加到主屏幕，就会多一个直接进快速记账的图标。</div>' +
+    items
+      .map(function (x) {
+        return '<div class="item row"><span class="sp">' + x[0] + '<div class="mute ellip">' + esc(base + "?q=" + x[1]) + '</div></span><button class="chip" data-copy="' + esc(base + "?q=" + x[1]) + '">复制链接</button></div>';
+      })
+      .join("") +
+    "</div>"
+  );
 }
 function expIn(a, b) {
   var v = 0;
@@ -2237,6 +2523,9 @@ function settings() {
   return (
     h +
     perSetCard() +
+    loanCard() +
+    subCard() +
+    shortcutCard() +
     tripCard() +
     carCard() +
     more() +
@@ -2532,7 +2821,7 @@ function alerts() {
     h +=
       '<div class="item row"><div class="ico">✈️</div><div class="sp">旅行中：' + esc(S.trip.name) +
       '<div class="mute">已花 ' + fmt(tripTotal(S.trip.name)) + "</div></div></div>";
-  h += perAlerts();
+  h += perAlerts() + loanAlerts() + subAlerts();
   if (!RO)
     ((cur === "joint" ? S.tx : (JOINT && JOINT.tx) || []).filter(function (t) { return t.q && t.q.by !== myId; }))
       .slice(0, 3)
@@ -6036,7 +6325,7 @@ function txSheet(edit, pre) {
 
 document.addEventListener("click", function (e) {
   var el = e.target.closest(
-    "[data-tab],[data-go],[data-tx],[data-acc],[data-m],[data-hm],[data-sprecv],[data-car],[data-qgo],[data-pd],[data-pnav],[data-plog],[data-pics],[data-sm],[data-sn],[data-sd],[data-base],[data-addcat],[data-delcat],[data-bk],[data-act]",
+    "[data-tab],[data-go],[data-tx],[data-acc],[data-m],[data-hm],[data-sprecv],[data-loan],[data-lpay],[data-copy],[data-car],[data-qgo],[data-pd],[data-pnav],[data-plog],[data-pics],[data-sm],[data-sn],[data-sd],[data-base],[data-addcat],[data-delcat],[data-bk],[data-act]",
   );
   if (e.target.id === "cam") {
     document.getElementById("shot").click();
@@ -6044,6 +6333,14 @@ document.addEventListener("click", function (e) {
   }
   if (e.target.id === "fab") {
     plusMenu();
+    return;
+  }
+  if (e.target.id === "loannew") {
+    loanSheet();
+    return;
+  }
+  if (e.target.id === "subadd") {
+    txSheet(null, { type: "expense", amt: "", acc: defAcc(), to: "", cat: "订阅会员", note: "", date: today(), fee: "" });
     return;
   }
   if (e.target.id === "pnow") {
@@ -6157,6 +6454,14 @@ document.addEventListener("click", function (e) {
     backTo = "";
     tab = el.dataset.tab;
     render();
+  } else if (el.dataset.loan) {
+    loanSheet(el.dataset.loan);
+  } else if (el.dataset.lpay) {
+    loanPaySheet(el.dataset.lpay);
+  } else if (el.dataset.copy) {
+    var cu0 = el.dataset.copy;
+    if (navigator.clipboard) navigator.clipboard.writeText(cu0).then(function () { toast("链接已复制"); }, function () { prompt("请手动复制：", cu0); });
+    else prompt("请手动复制：", cu0);
   } else if (el.dataset.pd) {
     perDaySheet(el.dataset.pd);
   } else if (el.dataset.pnav) {
@@ -6275,6 +6580,11 @@ document.addEventListener("change", function (e) {
     save();
     render();
   }
+  if (e.target.dataset.pmsg && S.pset) {
+    S.pset.msg = Object.assign({}, S.pset.msg, { [e.target.dataset.pmsg]: e.target.value.trim() });
+    save();
+    return;
+  }
   if (e.target.dataset.pset) {
     var pv = parseFloat(e.target.value);
     if (pv > 0 && S.pset) {
@@ -6325,6 +6635,28 @@ render();
 imgMigrate();
 imgGC();
 perToast();
+(function () {
+  var q = new URLSearchParams(location.search).get("q");
+  if (!q) return;
+  try {
+    history.replaceState(null, "", location.pathname + location.hash);
+  } catch (e) {}
+  if (RO) return;
+  setTimeout(function () {
+    if (q === "quick") quickSheet();
+    else if (q === "add") txSheet();
+    else if (q === "chat") {
+      var tries = 0,
+        iv = setInterval(function () {
+          if (chatOn()) {
+            clearInterval(iv);
+            tab = "chat";
+            render();
+          } else if (++tries > 20) clearInterval(iv);
+        }, 500);
+    }
+  }, 300);
+})();
 try {
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
 } catch (e) {}

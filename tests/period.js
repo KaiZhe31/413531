@@ -52,6 +52,17 @@ const calc=(w,pl,ps)=>JSON.parse(w.eval("JSON.stringify(perCalc("+JSON.stringify
  S().pl.length=0;S().pl.push({id:"y",start:add(-5),end:add(-1)});w.eval("render()");
  const ci=w.document.querySelector('[data-pset="cycle"]');ci.value="32";ci.dispatchEvent(new w.Event("change",{bubbles:true}));
  ok(S().pset.cycle===32&&w.eval("perCalc(S.pl,S.pset).next")===add(27),"changing the default cycle moves the prediction");
+ // ---------- her own messages to him ----------
+ w.eval("tab='period';render()");
+ ok(["before","in","today","late"].every(k=>!!w.document.querySelector('[data-pmsg="'+k+'"]')),"period page has 4 editable messages for him");
+ const mi=w.document.querySelector('[data-pmsg="before"]');mi.value="想喝热奶茶，想被抱抱";mi.dispatchEvent(new w.Event("change",{bubbles:true}));
+ ok(S().pset.msg&&S().pset.msg.before==="想喝热奶茶，想被抱抱","message saved");
+ S().pl.length=0;S().pl.push({id:"m1",start:add(-26)});S().pset.cycle=28;
+ ok(!/想喝热奶茶/.test(w.eval("perNow(S.pl,S.pset,false).tip"))&&/想喝热奶茶/.test(w.eval("perNow(S.pl,S.pset,true,'她').tip")),"custom message is what HE sees; her own tip stays unchanged");
+ S().pset.msg.before="";ok(/多一点耐心和温柔/.test(w.eval("perNow(S.pl,S.pset,true,'她').tip")),"empty message falls back to the default");
+ S().pset.msg={before:"买奶茶, 暖宝宝; 早点睡"};const ics2=w.eval("icsBuild(S.pl,S.pset,true,'她')");
+ ok(/DESCRIPTION:买奶茶\\, 暖宝宝\\; 早点睡/.test(ics2)&&!/DESCRIPTION:[^\r\n]*[^\\],/.test(ics2.split("\r\n").filter(l=>/^DESCRIPTION/.test(l)).join("\n")),"ICS escapes commas and semicolons in her message");
+ S().pset.msg={};
  // ---------- reminders ----------
  S().pl.length=0;S().pl.push({id:"z",start:add(-26)});S().pset.cycle=28;w.eval("tab='home';render()");
  ok(/距离下次经期还有 2 天/.test(app(w))&&/提前备好用品/.test(app(w)),"home card: 2 days to go with a tip");
@@ -88,6 +99,8 @@ const calc=(w,pl,ps)=>JSON.parse(w.eval("JSON.stringify(perCalc("+JSON.stringify
  B.eval("tab='home';render()");let pcap=null;B.claude={use:async()=>({save:async r=>{pcap=r}})};B.eval("claude={use:async function(){return {save:async function(r){window.__cap=r}}}}");
  B.document.querySelector("[data-pics]").click();await wait(300);const pc=B.window.__cap;ok(pc&&pc.filename==="her-period.ics",'"加入日历" exports her-period.ics for him');
  const text=await new Promise(r=>{const fr=new B.FileReader();fr.onload=()=>r(fr.result);fr.readAsText(pc.data)});ok(/Alice 的经期预计开始/.test(text)&&/TRIGGER:-PT39H/.test(text),"his calendar file says 'Alice 的经期预计开始' with a 2-day alarm");
+ A.eval("S.pset.msg={before:'想喝热奶茶🧋，想被抱抱'};save()");
+ ok(await until(()=>{B.eval("tab='home';render()");return /想喝热奶茶🧋，想被抱抱/.test(app(B))},30000),"her own message shows up on Bob's home");
  A.eval("S.pset.share=false;save()");
  ok(await until(()=>{B.eval("tab='home';render()");return !/Alice 的经期/.test(app(B))},30000),"sharing turned off: reminder disappears for Bob");
  [A,B].forEach((x,i)=>ok(x.errs.length===0,"no uncaught errors "+"AB"[i]+": "+x.errs.join("|")));
