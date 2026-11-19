@@ -199,6 +199,7 @@ function migrate() {
   }
   S.cars = S.cars || [];
   S.pl = S.pl || [];
+  S.shop = S.shop || [];
   S.loans = S.loans || [];
   S.fav = S.fav || [];
   // 第一次用快速记账时放 3 个示例模板（可在「快速记账 → 管理模板」里改 / 删）
@@ -283,7 +284,8 @@ var tab = "home",
   sel = {},
   trendCat = "",
   qManage = false,
-  perMon = new Date();
+  perMon = new Date(),
+  shopW = false;
 function load() {
   try {
     var r = localStorage.getItem(KEY);
@@ -715,6 +717,7 @@ function render() {
   else if (tab === "period") h = periodPage();
   else if (tab === "loans") h = loansPage();
   else if (tab === "subs") h = subsPage();
+  else if (tab === "shop") h = shopPage();
   else h = settings();
   if (0)
     h =
@@ -892,14 +895,14 @@ function plusMenu() {
 }
 function quickAdd(f) {
   var a = acc(f.acc) ? f.acc : defAcc(),
-    pre = { type: f.type, amt: f.amt > 0 ? String(f.amt) : "", acc: a, to: "", cat: f.cat, sub: f.sub, note: f.note || "", date: today(), fee: "" };
+    pre = { type: f.type, amt: f.amt > 0 ? String(f.amt) : "", acc: a, to: "", cat: f.cat, sub: f.sub, note: f.note || "", date: f.date || today(), fee: "" };
   if (!(f.amt > 0) || cur === "joint") {
     txSheet(null, pre);
     return;
   }
   mark();
   S.tx.push({
-    id: uid(), ts: Date.now(), type: f.type, amt: +f.amt, acc: a, date: today(), note: f.note || "", cat: f.cat,
+    id: uid(), ts: Date.now(), type: f.type, amt: +f.amt, acc: a, date: f.date || today(), note: f.note || "", cat: f.cat,
     sub: ((S.sub || {})[f.cat] || []).indexOf(f.sub) >= 0 ? f.sub : undefined,
     trip: S.trip ? S.trip.name : undefined,
   });
@@ -922,7 +925,8 @@ function quickSheet() {
     sh.innerHTML =
       '<button class="chip" data-close="1" style="margin-bottom:10px">‹ 返回</button><b>⚡ 快速记账</b><div class="mute" style="margin:4px 0 10px">' +
       (qManage ? "点模板可修改或删除" : "点一下就记好（记在今天，用模板里的账户和金额）") +
-      '</div><div class="chips" style="gap:8px">' +
+      '</div><div class="row" style="gap:8px"><input id="qq" placeholder="一句话记账：星巴克 15" autocomplete="off"><button class="btn" id="qgo" style="margin:0;width:auto;padding:10px 16px">记</button></div>' +
+      '<div class="mute" id="qp" style="margin:6px 0 10px;min-height:20px">例如：午餐 12　grab rm 20　昨天 晚餐 30 tng　+3000 工资</div><div class="chips" style="gap:8px">' +
       f
         .map(function (x, i) {
           return (
@@ -941,10 +945,31 @@ function quickSheet() {
       '</button><button class="btn ghost" data-qf="1" style="color:var(--acc)">✍️ 改用完整记账</button>';
   }
   draw();
+  function doQuick() {
+    var r = parseQuick(sh.querySelector("#qq").value);
+    if (!r.ok) return toast("请带上金额，例如：星巴克 15");
+    m.remove();
+    quickAdd({ name: r.note || r.cat, type: r.type, amt: r.amt, acc: r.acc, cat: r.cat, sub: r.sub, note: r.note, date: r.date });
+  }
+  sh.addEventListener("input", function (e) {
+    if (e.target.id !== "qq") return;
+    var r = parseQuick(e.target.value);
+    sh.querySelector("#qp").textContent = !e.target.value.trim() ? "例如：午餐 12　grab rm 20　昨天 晚餐 30 tng　+3000 工资" : r.ok ? "→ " + quickPreview(r) : "还没认出金额（要带数字，例如：星巴克 15）";
+  });
+  sh.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && e.target.id === "qq") {
+      e.preventDefault();
+      doQuick();
+    }
+  });
   sh.addEventListener("click", function (e) {
     var b = e.target.closest("button");
     if (!b) return;
     var d = b.dataset;
+    if (b.id === "qgo") {
+      doQuick();
+      return;
+    }
     if (d.qi !== undefined) {
       var i = +d.qi;
       m.remove();
@@ -1919,9 +1944,9 @@ function subsPage() {
 function shortcutCard() {
   if (RO) return "";
   var base = location.origin + location.pathname,
-    items = [["快速记账", "quick"], ["完整记账", "add"], ["聊天", "chat"]];
+    items = [["快速记账", "quick"], ["完整记账", "add"], ["购物清单", "shop"], ["聊天", "chat"]];
   return (
-    '<div class="card"><b>⚡ 主屏幕快捷入口</b><div class="mute" style="margin:4px 0 8px">Android：长按桌面上的 App 图标，会出现「快速记账」「完整记账」「聊天」。<br>iPhone：不支持长按快捷方式，可以在 Safari 里打开下面的链接 → 分享 → 添加到主屏幕，就会多一个直接进快速记账的图标。</div>' +
+    '<div class="card"><b>⚡ 主屏幕快捷入口</b><div class="mute" style="margin:4px 0 8px">Android：长按桌面上的 App 图标，会出现「快速记账」「完整记账」「购物清单」「聊天」。<br>iPhone：不支持长按快捷方式，可以在 Safari 里打开下面的链接 → 分享 → 添加到主屏幕，就会多一个直接进快速记账的图标。</div>' +
     items
       .map(function (x) {
         return '<div class="item row"><span class="sp">' + x[0] + '<div class="mute ellip">' + esc(base + "?q=" + x[1]) + '</div></span><button class="chip" data-copy="' + esc(base + "?q=" + x[1]) + '">复制链接</button></div>';
@@ -1929,6 +1954,221 @@ function shortcutCard() {
       .join("") +
     "</div>"
   );
+}
+// ---------- 一句话记账：「星巴克 15」「昨天午餐 12.5 tng」「+3000 工资」----------
+var ZHCAT = [
+  [/早餐|早饭/, "餐饮", "早餐"], [/午餐|午饭/, "餐饮", "午餐"], [/晚餐|晚饭/, "餐饮", "晚餐"], [/宵夜|夜宵/, "餐饮", "宵夜"],
+  [/外卖/, "外卖"], [/咖啡|奶茶|饮料|珍珠/, "咖啡饮料"], [/吃饭|聚餐|火锅|烧烤|餐/, "餐饮"],
+  [/买菜|超市|菜市场|杂货|水果/, "超市杂货"], [/日用品|纸巾|洗衣液|洗发水|牙膏/, "日用品"],
+  [/停车/, "交通", "停车"], [/打车|公交|地铁|火车|巴士|交通/, "交通"], [/加油|油费/, "油费"], [/过路费/, "过路费"],
+  [/电费|水费|网费|宽带|煤气/, "水电网络"], [/话费|充值/, "话费充值"], [/房租|租金/, "房租"],
+  [/电影|游戏|ktv|唱k/i, "娱乐"], [/看病|买药|医院|诊所/, "医疗"], [/理发|美甲|护肤/, "美容美发"],
+  [/健身|羽毛球|游泳/, "运动健身"], [/红包|礼物|请客/, "礼物红包"], [/猫粮|狗粮|宠物/, "宠物"], [/保险/, "保险"],
+];
+var ZHBRAND = [
+  [/星巴克/, "咖啡饮料", "Starbucks"], [/麦当劳|肯德基/, "餐饮"], [/屈臣氏/, "日用品", "Watsons"], [/优衣库/, "衣服鞋包", "Uniqlo"],
+  [/淘宝|拼多多/, "购物"], [/滴滴/, "交通"],
+];
+function parseQuick(text) {
+  var raw = String(text || "").trim();
+  if (!raw) return { ok: false };
+  var s = raw.replace(/(\d),(\d{3})/g, "$1$2"),
+    type = "expense",
+    date = today();
+  if (/^\s*\+/.test(s) || /收入|收到|工资|薪水|奖金|入账/.test(s)) type = "income";
+  s = s.replace(/^\s*\+\s*/, "");
+  var dm = s.match(/前天|昨天|昨日|今天|今日/);
+  if (dm) {
+    date = addDays(today(), dm[0] === "前天" ? -2 : /昨/.test(dm[0]) ? -1 : 0);
+    s = s.replace(dm[0], " ");
+  }
+  var re = /\d+(?:\.\d+)?/g,
+    m,
+    cand = [];
+  while ((m = re.exec(s))) {
+    var a = m.index,
+      b = a + m[0].length,
+      head = s.slice(0, a),
+      tail = s.slice(b),
+      rmPre = /rm\s*$/i.test(head);
+    if (!rmPre && a > 0 && /[A-Za-z\-.]/.test(s[a - 1])) continue; // 例如 7-eleven 里的 7 不是金额
+    if (/^[A-Za-z\-]/.test(tail) && !/^(rm|myr)/i.test(tail)) continue;
+    cand.push({ a: a, b: b, v: parseFloat(m[0]), mark: rmPre || /^\s*(块|元|rm|myr)/i.test(tail) });
+  }
+  var pk =
+    cand.filter(function (c) { return c.mark && c.v > 0; }).pop() ||
+    cand.filter(function (c) { return c.v > 0; }).pop();
+  if (!pk) return { ok: false };
+  var rest = (s.slice(0, pk.a).replace(/rm\s*$/i, "") + " " + s.slice(pk.b).replace(/^\s*(块|元|rm|myr)/i, ""))
+      .replace(/[，,;；]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim(),
+    accId = defAcc(),
+    best = null,
+    low = rest.toLowerCase();
+  S.accounts.forEach(function (ac) {
+    if (ac.hide) return;
+    var nm = String(ac.name || "").toLowerCase().trim();
+    [nm, nm.split(/\s+/)[0]].forEach(function (t) {
+      if (!t || (/[\u4e00-\u9fa5]/.test(t) ? t.length < 2 : t.length < 3)) return;
+      if (low.indexOf(t) >= 0 && (!best || t.length > best.t.length)) best = { id: ac.id, t: t };
+    });
+  });
+  if (best) {
+    accId = best.id;
+    rest = rest.replace(new RegExp(best.t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), " ").replace(/\s+/g, " ").trim();
+  }
+  var cat,
+    sub,
+    lr = rest.toLowerCase();
+  if (type === "income")
+    // 先看你自己的收入分类名（例如「兼职」「理财」）有没有出现在这句话里，再认工资 / 奖金
+    cat =
+      S.cats.income.find(function (c) { return c !== "其他" && raw.indexOf(c) >= 0; }) ||
+      (/工资|薪水|salary|gaji|payroll/i.test(raw) && S.cats.income.indexOf("工资") >= 0 ? "工资" : guessCat(raw, "income"));
+  else {
+    var hit = null;
+    S.cats.expense.forEach(function (c) {
+      ((S.sub || {})[c] || []).forEach(function (x) {
+        var xl = String(x).toLowerCase();
+        if (xl.length >= 2 && lr.indexOf(xl) >= 0 && (!hit || xl.length > hit.l)) hit = { c: c, s: x, l: xl.length };
+      });
+    });
+    if (hit) {
+      cat = hit.c;
+      sub = hit.s;
+    }
+    [ZHBRAND, ZHCAT].forEach(function (list) {
+      if (cat) return;
+      list.forEach(function (z) {
+        if (!cat && z[0].test(rest) && S.cats.expense.indexOf(z[1]) >= 0) {
+          cat = z[1];
+          if (z[2] && ((S.sub || {})[z[1]] || []).indexOf(z[2]) >= 0) sub = z[2];
+        }
+      });
+    });
+    if (!cat) cat = guessCat(rest, "expense");
+  }
+  return { ok: true, type: type, amt: +pk.v.toFixed(2), cat: cat, sub: sub, note: rest, acc: accId, date: date };
+}
+function quickPreview(r) {
+  var a = acc(r.acc) || {};
+  return (
+    (r.type === "income" ? "收入 · " : "") + r.cat + (r.sub ? " · " + r.sub : "") + " · " + fmt(r.amt, a.cur) + " · " + (a.name || "") +
+    (r.date !== today() ? " · " + perMD(r.date) : "")
+  );
+}
+// ---------- 🛒 购物清单 ----------
+// S.shop = [{ id, name, staple?, done? }]：「我的账本」里是自己的清单，「共同账本」里是两个人共用的清单
+// staple = 每周都买的日常用品；完成采购后它们会重新变成「没买」，这次临时买的会拿掉
+var SHOPSUG = ["鸡蛋", "牛奶", "面包", "米", "食用油", "鸡肉", "蔬菜", "水果", "洗衣液", "纸巾", "洗发水", "牙膏", "洗洁精", "垃圾袋"];
+function shopAdd(text, staple) {
+  var n = 0;
+  String(text || "")
+    .split(/[，,、\n]+/)
+    .forEach(function (t) {
+      t = t.trim().slice(0, 40);
+      if (!t) return;
+      S.shop = S.shop || [];
+      var dup = S.shop.find(function (x) { return x.name === t; });
+      if (dup) {
+        if (staple && !dup.staple) {
+          dup.staple = true;
+          n++;
+        }
+        return;
+      }
+      S.shop.push({ id: uid(), name: t, staple: staple ? true : undefined });
+      n++;
+    });
+  if (n) save();
+  return n;
+}
+function shopOpen(o) {
+  return ((o && o.shop) || []).filter(function (x) { return !x.done; }).length;
+}
+function shopAlerts() {
+  if (RO || cur !== "mine" || S.shopDay === undefined || S.shopDay === null) return "";
+  var n = shopOpen(S);
+  if (!n || new Date().getDay() !== +S.shopDay) return "";
+  return '<div class="item row" data-go="shop" style="cursor:pointer"><div class="ico">🛒</div><div class="sp">今天是采购日<div class="mute">购物清单里还有 ' + n + " 样没买</div></div></div>";
+}
+function shopCard() {
+  if (RO) return "";
+  var mine = cur === "mine" ? S : typeof MINE !== "undefined" ? MINE : null,
+    joint = cur === "joint" ? S : typeof JOINT !== "undefined" ? JOINT : null;
+  return (
+    '<div class="card"><b>🛒 购物清单</b><div class="mute" style="margin:4px 0 8px">每周去超市要买的日常用品，也可以和另一半共用一份清单。<br>我的：还差 ' +
+    shopOpen(mine) + " 样" + (joint ? " · 共同：还差 " + shopOpen(joint) + " 样" : "") + '</div><button class="btn" data-go="shop">打开购物清单</button></div>'
+  );
+}
+function shopDoneSheet() {
+  var got = (S.shop || []).filter(function (x) { return x.done; });
+  if (!got.length) return toast("先勾选买到的东西");
+  var m = openSheet(
+    "<b>✅ 完成采购</b><div class=\"mute\" style=\"margin:4px 0 8px\">已买 " + got.length + " 样。每周都买的会重新变成「没买」，这次临时买的会从清单里拿掉。</div>" +
+      '<label>一共花了多少（选填，会记一笔「超市杂货」）</label><input id="sa" type="number" inputmode="decimal" step="0.01"><label>用哪个账户付</label><select id="sc">' +
+      S.accounts.filter(function (a) { return !a.hide; }).map(function (a) { return '<option value="' + a.id + '">' + esc(a.name) + " (" + a.cur + ")</option>"; }).join("") +
+      '</select><button class="btn" id="ok">完成</button>',
+  );
+  m.querySelector("#sc").value = defAcc();
+  m.querySelector("#ok").onclick = function () {
+    var amt = parseFloat(m.querySelector("#sa").value),
+      accId = m.querySelector("#sc").value,
+      cat = S.cats.expense.indexOf("超市杂货") >= 0 ? "超市杂货" : "其他";
+    mark();
+    S.shop = S.shop.filter(function (x) { return !(x.done && !x.staple); });
+    S.shop.forEach(function (x) {
+      if (x.done) x.done = undefined;
+    });
+    if (amt > 0 && cur === "mine")
+      S.tx.push({ id: uid(), ts: Date.now(), type: "expense", amt: amt, acc: accId, date: today(), note: "购物清单", cat: cat, trip: S.trip ? S.trip.name : undefined });
+    save();
+    m.remove();
+    render();
+    if (amt > 0 && cur === "joint") txSheet(null, { type: "expense", amt: String(amt), acc: accId, to: "", cat: cat, note: "购物清单", date: today(), fee: "" });
+    else showUndo(amt > 0 ? "已记录：超市杂货 " + fmt(amt, (acc(accId) || {}).cur) : "已完成采购");
+  };
+}
+function shopPage() {
+  var L = S.shop || [],
+    n = shopOpen(S),
+    canSwitch = cur === "joint" || chatOn();
+  function row(x) {
+    return (
+      '<div class="item row"><button class="chip' + (x.done ? " on" : "") + '" data-shop="' + x.id + '" style="min-width:34px" aria-label="已买">' + (x.done ? "✓" : "") +
+      '</button><span class="sp" data-shop="' + x.id + '" style="cursor:pointer;' + (x.done ? "text-decoration:line-through;opacity:.55" : "") + '">' + esc(x.name) +
+      '</span><button class="chip" data-shopst="' + x.id + '" aria-label="每周都买">' + (x.staple ? "🔁" : "☆") + '</button><button class="chip" data-shopdel="' + x.id + '" aria-label="删除">✕</button></div>'
+    );
+  }
+  function sorted(a) {
+    return a.slice().sort(function (p, q) { return (p.done ? 1 : 0) - (q.done ? 1 : 0); });
+  }
+  var st = L.filter(function (x) { return x.staple; }),
+    one = L.filter(function (x) { return !x.staple; }),
+    have = L.map(function (x) { return x.name; }),
+    sug = SHOPSUG.filter(function (x) { return have.indexOf(x) < 0; }).slice(0, 8),
+    h =
+      '<div class="card"><h1>🛒 购物清单</h1>' +
+      (canSwitch
+        ? '<div class="seg" style="margin:6px 0"><button data-shsw="mine" class="' + (cur === "mine" ? "on" : "") + '">我的清单</button><button data-shsw="joint" class="' + (cur === "joint" ? "on" : "") + '">共同清单</button></div>'
+        : "") +
+      '<div class="mute">' + (cur === "joint" ? "两个人共用，谁加、谁勾，对方都看得到" : "自己每周去超市要买的东西") + " · 还差 " + n + " 样（共 " + L.length + " 样）</div>" +
+      '<div class="row" style="gap:8px;margin-top:10px"><input id="shi" placeholder="加一样，例如：鸡蛋（可用逗号一次加多样）" autocomplete="off"><button class="btn" id="shadd" style="margin:0;width:auto;padding:10px 16px">加</button></div>' +
+      '<label style="display:flex;gap:8px;align-items:center;color:var(--ink);margin-top:8px"><input type="checkbox" id="shw" style="width:auto"' + (shopW ? " checked" : "") + "> 每周都买（完成采购后自动重置）</label>" +
+      (sug.length ? '<div class="chips" style="margin-top:8px">' + sug.map(function (x) { return '<button class="chip" data-shsug="' + esc(x) + '">＋ ' + esc(x) + "</button>"; }).join("") + "</div>" : "") +
+      "</div>";
+  if (st.length) h += '<div class="card"><b>🔁 每周都买</b>' + sorted(st).map(row).join("") + "</div>";
+  if (one.length) h += '<div class="card"><b>这次临时要买</b>' + sorted(one).map(row).join("") + "</div>";
+  if (!L.length) h += '<div class="empty">清单是空的<br><span class="mute">先把每周都要买的日常用品加进来，勾上「每周都买」</span></div>';
+  if (L.some(function (x) { return x.done; }))
+    h += '<button class="btn" id="shdone">✅ 完成采购</button><button class="btn ghost" id="shreset" style="color:var(--mute)">取消全部勾选</button>';
+  if (cur === "mine")
+    h +=
+      '<div class="card"><label style="margin-top:0">采购日提醒（那天打开 App，首页会提醒你清单里还有几样）</label><select id="shday"><option value="">不提醒</option>' +
+      ["日", "一", "二", "三", "四", "五", "六"].map(function (d, i) { return '<option value="' + i + '"' + (S.shopDay !== undefined && +S.shopDay === i ? " selected" : "") + ">每周" + d + "</option>"; }).join("") +
+      "</select></div>";
+  return h;
 }
 function expIn(a, b) {
   var v = 0;
@@ -2525,6 +2765,7 @@ function settings() {
     perSetCard() +
     loanCard() +
     subCard() +
+    shopCard() +
     shortcutCard() +
     tripCard() +
     carCard() +
@@ -2821,7 +3062,7 @@ function alerts() {
     h +=
       '<div class="item row"><div class="ico">✈️</div><div class="sp">旅行中：' + esc(S.trip.name) +
       '<div class="mute">已花 ' + fmt(tripTotal(S.trip.name)) + "</div></div></div>";
-  h += perAlerts() + loanAlerts() + subAlerts();
+  h += perAlerts() + loanAlerts() + subAlerts() + shopAlerts();
   if (!RO)
     ((cur === "joint" ? S.tx : (JOINT && JOINT.tx) || []).filter(function (t) { return t.q && t.q.by !== myId; }))
       .slice(0, 3)
@@ -6325,7 +6566,7 @@ function txSheet(edit, pre) {
 
 document.addEventListener("click", function (e) {
   var el = e.target.closest(
-    "[data-tab],[data-go],[data-tx],[data-acc],[data-m],[data-hm],[data-sprecv],[data-loan],[data-lpay],[data-copy],[data-car],[data-qgo],[data-pd],[data-pnav],[data-plog],[data-pics],[data-sm],[data-sn],[data-sd],[data-base],[data-addcat],[data-delcat],[data-bk],[data-act]",
+    "[data-tab],[data-go],[data-tx],[data-acc],[data-shop],[data-shopst],[data-shopdel],[data-shsug],[data-shsw],[data-m],[data-hm],[data-sprecv],[data-loan],[data-lpay],[data-copy],[data-car],[data-qgo],[data-pd],[data-pnav],[data-plog],[data-pics],[data-sm],[data-sn],[data-sd],[data-base],[data-addcat],[data-delcat],[data-bk],[data-act]",
   );
   if (e.target.id === "cam") {
     document.getElementById("shot").click();
@@ -6360,6 +6601,23 @@ document.addEventListener("click", function (e) {
   }
   if (e.target.id === "pics") {
     perExport(S.pl, S.pset || {}, false);
+    return;
+  }
+  if (e.target.id === "shadd") {
+    var shi = document.getElementById("shi");
+    if (shopAdd(shi.value, shopW)) render();
+    return;
+  }
+  if (e.target.id === "shdone") {
+    shopDoneSheet();
+    return;
+  }
+  if (e.target.id === "shreset") {
+    (S.shop || []).forEach(function (x) {
+      x.done = undefined;
+    });
+    save();
+    render();
     return;
   }
   if (e.target.id === "carnew") {
@@ -6472,6 +6730,36 @@ document.addEventListener("click", function (e) {
   } else if (el.dataset.pics) {
     var pp = periodOf(el.dataset.pics);
     if (pp) perExport(pp.pl, pp.pset, true, names[el.dataset.pics]);
+  } else if (el.dataset.shop) {
+    var si = (S.shop || []).find(function (x) { return x.id === el.dataset.shop; });
+    if (si) {
+      si.done = si.done ? undefined : true;
+      save();
+      render();
+    }
+  } else if (el.dataset.shopst) {
+    var sj = (S.shop || []).find(function (x) { return x.id === el.dataset.shopst; });
+    if (sj) {
+      sj.staple = sj.staple ? undefined : true;
+      save();
+      render();
+    }
+  } else if (el.dataset.shopdel) {
+    mark();
+    S.shop = (S.shop || []).filter(function (x) { return x.id !== el.dataset.shopdel; });
+    save();
+    render();
+    showUndo("已删除");
+  } else if (el.dataset.shsug) {
+    shopAdd(el.dataset.shsug, shopW);
+    render();
+  } else if (el.dataset.shsw) {
+    sw(el.dataset.shsw);
+    if (cur !== el.dataset.shsw) toast("共同账本还没准备好");
+    else {
+      tab = "shop";
+      render();
+    }
   } else if (el.dataset.qgo) {
     if (cur !== "joint") sw("joint");
     var qt = S.tx.find(function (x) {
@@ -6566,6 +6854,14 @@ document.addEventListener("change", function (e) {
     trendCat = e.target.value;
     render();
   }
+  if (e.target.id === "shw") {
+    shopW = e.target.checked;
+    render();
+  }
+  if (e.target.id === "shday") {
+    S.shopDay = e.target.value === "" ? undefined : +e.target.value;
+    save();
+  }
   if (e.target.id === "pon2") {
     S.pset = Object.assign({ cycle: 28, len: 5, days: 2, share: false }, S.pset || {}, { on: e.target.checked });
     save();
@@ -6635,6 +6931,16 @@ render();
 imgMigrate();
 imgGC();
 perToast();
+// 购物清单：在输入框里按回车就加上，并留在输入框里继续输入下一样
+document.addEventListener("keydown", function (e) {
+  if (e.key !== "Enter" || !e.target || e.target.id !== "shi") return;
+  e.preventDefault();
+  if (shopAdd(e.target.value, shopW)) {
+    render();
+    var n = document.getElementById("shi");
+    if (n) n.focus();
+  }
+});
 (function () {
   var q = new URLSearchParams(location.search).get("q");
   if (!q) return;
@@ -6645,7 +6951,10 @@ perToast();
   setTimeout(function () {
     if (q === "quick") quickSheet();
     else if (q === "add") txSheet();
-    else if (q === "chat") {
+    else if (q === "shop") {
+      tab = "shop";
+      render();
+    } else if (q === "chat") {
       var tries = 0,
         iv = setInterval(function () {
           if (chatOn()) {

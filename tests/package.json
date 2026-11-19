@@ -2,7 +2,7 @@
   "private": true,
   "description": "账本的自动测试：记账、同步、合并、导入等",
   "scripts": {
-    "test": "node e2e.js && node more.js && node new_features.js && node split.js && node car.js && node chat.js && node cards_q.js && node period.js && node fixed.js && node shortcuts.js && node sync_e2e.js"
+    "test": "node e2e.js && node more.js && node new_features.js && node split.js && node car.js && node chat.js && node cards_q.js && node period.js && node fixed.js && node daily.js && node shortcuts.js && node sync_e2e.js"
   },
   "devDependencies": {
     "jsdom": "^22.1.0",

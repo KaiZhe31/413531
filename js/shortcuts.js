@@ -4,9 +4,9 @@ const mpath=[path.join(__dirname,"..","manifest.json"),path.join(__dirname,"mani
 (async()=>{
  const man=JSON.parse(fs.readFileSync(mpath,"utf8"));
  ok(man.start_url==="."&&man.display==="standalone"&&man.icons.length>=2,"manifest keeps its original fields");
- ok(Array.isArray(man.shortcuts)&&man.shortcuts.length===3,"manifest has 3 shortcuts");
- ok(man.shortcuts.every(s=>s.name&&s.short_name&&/^\.\/\?q=(quick|add|chat)$/.test(s.url)&&s.icons&&s.icons[0].src),"every shortcut has a name, a ./?q=… URL (inside scope) and an icon");
- const qs=man.shortcuts.map(s=>s.url.split("=")[1]);ok(["quick","add","chat"].every(q=>qs.includes(q)),"shortcuts: quick / add / chat");
+ ok(Array.isArray(man.shortcuts)&&man.shortcuts.length===4,"manifest has 4 shortcuts");
+ ok(man.shortcuts.every(s=>s.name&&s.short_name&&/^\.\/\?q=(quick|add|shop|chat)$/.test(s.url)&&s.icons&&s.icons[0].src),"every shortcut has a name, a ./?q=… URL (inside scope) and an icon");
+ const qs=man.shortcuts.map(s=>s.url.split("=")[1]);ok(["quick","add","shop","chat"].every(q=>qs.includes(q)),"shortcuts: quick / add / shop / chat");
  const tabs=w=>[...w.document.querySelectorAll(".sheet")].map(x=>x.innerHTML).join("|");
  // ?q=quick
  let w=boot({"ledger.v1":base},null,"https://x.test/?q=quick");await wait(700);
@@ -15,6 +15,9 @@ const mpath=[path.join(__dirname,"..","manifest.json"),path.join(__dirname,"mani
  // ?q=add
  w=boot({"ledger.v1":base},null,"https://x.test/?q=add");await wait(700);
  ok(!!w.document.querySelector("#amt")&&w.location.search==="","?q=add opens the full entry form");
+ // ?q=shop
+ w=boot({"ledger.v1":base},null,"https://x.test/?q=shop");await wait(700);
+ ok(w.__g("tab")==="shop"&&/购物清单/.test(w.document.getElementById("app").innerHTML)&&w.location.search==="","?q=shop opens the shopping list");
  // ?q=chat (only once chat is available)
  w=boot({"ledger.v1":base},null,"https://x.test/?q=chat");w.eval("chatOn=function(){return true}");await wait(1200);
  ok(w.__g("tab")==="chat","?q=chat opens the chat tab when chat is available");
@@ -25,7 +28,7 @@ const mpath=[path.join(__dirname,"..","manifest.json"),path.join(__dirname,"mani
  w=boot({"ledger.v1":base},null,"https://x.test/?q=quick#sync="+code);await wait(700);await wait(500);ok(/快速记账/.test(tabs(w))&&/同步设置/.test(tabs(w)),"a #sync= link still works next to ?q= (both sheets open)");
  // settings card with copy links
  w=boot({"ledger.v1":base});w.eval("tab='set';render()");const html=w.document.getElementById("app").innerHTML;
- ok(/主屏幕快捷入口/.test(html)&&/\?q=quick/.test(html)&&/\?q=add/.test(html)&&/\?q=chat/.test(html),"settings card shows the three links");
+ ok(/主屏幕快捷入口/.test(html)&&/\?q=quick/.test(html)&&/\?q=add/.test(html)&&/\?q=shop/.test(html)&&/\?q=chat/.test(html),"settings card shows all four links");
  ok(/iPhone/.test(html)&&/Android/.test(html),"card is honest about Android vs iPhone");
  let copied=null;w.prompt=(m,v)=>{copied=v;return null};click(w,'[data-copy*="q=quick"]');await wait(100);
  ok(copied===null||/\?q=quick$/.test(copied),"copy link button works (prompt fallback in this test browser)");
